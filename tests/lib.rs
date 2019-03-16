@@ -1,11 +1,3 @@
-extern crate mockito;
-extern crate oauth2;
-extern crate serde;
-extern crate url;
-#[macro_use]
-extern crate serde_derive;
-extern crate serde_json;
-
 use mockito::{mock, server_url};
 use url::form_urlencoded::byte_serialize;
 use url::Url;
@@ -14,8 +6,10 @@ use oauth2::basic::*;
 use oauth2::prelude::*;
 use oauth2::*;
 
-fn new_client() -> BasicClient {
-    BasicClient::new(
+use serde::{Deserialize, Serialize};
+
+fn new_client() -> Client {
+    Client::new(
         ClientId::new("aaa".to_string()),
         Some(ClientSecret::new("bbb".to_string())),
         AuthUrl::new(Url::parse("http://example.com/auth").unwrap()),
@@ -25,8 +19,8 @@ fn new_client() -> BasicClient {
     )
 }
 
-fn new_mock_client() -> BasicClient {
-    BasicClient::new(
+fn new_mock_client() -> Client {
+    Client::new(
         ClientId::new("aaa".to_string()),
         Some(ClientSecret::new("bbb".to_string())),
         AuthUrl::new(Url::parse("http://example.com/auth").unwrap()),
@@ -36,8 +30,8 @@ fn new_mock_client() -> BasicClient {
     )
 }
 
-fn new_mock_client_with_unsafe_chars() -> BasicClient {
-    BasicClient::new(
+fn new_mock_client_with_unsafe_chars() -> Client {
+    Client::new(
         ClientId::new("aaa/;&".to_string()),
         Some(ClientSecret::new("bbb/;&".to_string())),
         AuthUrl::new(Url::parse("http://example.com/auth").unwrap()),
@@ -173,7 +167,7 @@ fn test_authorize_url_implicit_insecure() {
 
 #[test]
 fn test_authorize_url_with_param() {
-    let client = BasicClient::new(
+    let client = Client::new(
         ClientId::new("aaa".to_string()),
         Some(ClientSecret::new("bbb".to_string())),
         AuthUrl::new(Url::parse("http://example.com/auth?foo=bar").unwrap()),
@@ -260,7 +254,7 @@ fn test_exchange_code_successful_with_minimal_json_response() {
         // Omit the Content-Type header to ensure that we still parse it as JSON.
         .create();
 
-    let client = BasicClient::new(
+    let client = Client::new(
         ClientId::new("aaa".to_string()),
         Some(ClientSecret::new("bbb".to_string())),
         AuthUrl::new(Url::parse("http://example.com/auth").unwrap()),
@@ -810,7 +804,7 @@ fn test_exchange_code_with_invalid_token_type() {
         .with_body("{\"access_token\": \"12/34\", \"token_type\": \"magic\"}")
         .create();
 
-    let client = BasicClient::new(
+    let client = Client::new(
         ClientId::new("aaa".to_string()),
         None,
         AuthUrl::new(Url::parse("http://example.com/auth").unwrap()),
@@ -871,7 +865,7 @@ fn test_exchange_code_with_400_status_code() {
 
 #[test]
 fn test_exchange_code_fails_gracefully_on_transport_error() {
-    let client = BasicClient::new(
+    let client = Client::new(
         ClientId::new("aaa".to_string()),
         Some(ClientSecret::new("bbb".to_string())),
         AuthUrl::new(Url::parse("http://auth").unwrap()),
@@ -890,9 +884,8 @@ fn test_exchange_code_fails_gracefully_on_transport_error() {
 }
 
 mod colorful_extension {
-    extern crate serde_json;
-
     use oauth2::*;
+    use serde::{Deserialize, Serialize};
     use std::fmt::Error as FormatterError;
     use std::fmt::{Debug, Display, Formatter};
 

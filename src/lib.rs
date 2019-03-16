@@ -213,35 +213,22 @@
 //! - [Github](https://github.com/ramosbugs/oauth2-rs/blob/master/examples/github.rs)
 //!
 
-extern crate base64;
-extern crate curl;
-extern crate failure;
-#[macro_use]
-extern crate failure_derive;
-extern crate rand;
-extern crate serde;
-#[macro_use]
-extern crate serde_derive;
-extern crate serde_json;
-extern crate sha2;
-extern crate url;
+use std::{
+    borrow::Cow,
+    convert::Into,
+    fmt::Error as FormatterError,
+    fmt::{Debug, Display, Formatter},
+    ops::Deref,
+    time::Duration,
+};
 
-use std::convert::Into;
-use std::fmt::Error as FormatterError;
-use std::fmt::{Debug, Display, Formatter};
-use std::io::Read;
-use std::marker::PhantomData;
-use std::ops::Deref;
-use std::time::Duration;
-
-use curl::easy::Easy;
+use failure::Fail;
+use futures::{Future, Stream};
 use rand::{thread_rng, Rng};
 use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use url::Url;
-
-use prelude::*;
 
 const CONTENT_TYPE_JSON: &str = "application/json";
 
@@ -252,7 +239,7 @@ const CONTENT_TYPE_JSON: &str = "application/json";
 /// The default AuthType is *BasicAuth*, following the recommendation of
 /// [Section 2.3.1 of RFC 6749](https://tools.ietf.org/html/rfc6749#section-2.3.1).
 ///
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum AuthType {
     /// The client_id and client_secret will be included as part of the request body.
     RequestBody,
@@ -260,99 +247,25 @@ pub enum AuthType {
     BasicAuth,
 }
 
-///
-/// Crate prelude that should be wildcard-imported by crate users.
-///
-pub mod prelude {
-    use std::fmt::Debug;
-    use std::ops::Deref;
-
-    ///
-    /// New type to wrap a more primitive type in a more typesafe manner.
-    ///
-    pub trait NewType<T>: Clone + Debug + Deref + PartialEq {
-        ///
-        /// Create a new instance to wrap the given `val`.
-        ///
-        fn new(val: T) -> Self;
-    }
-
-    ///
-    /// New type representing a secret value to wrap a more primitive type in a more typesafe
-    /// manner.
-    ///
-    pub trait SecretNewType<T>: Debug {
-        ///
-        /// Create a new instance to wrap the given `val`.
-        ///
-        fn new(val: T) -> Self
-        where
-            Self: Sized;
-        ///
-        /// Get the secret contained within this type.
-        ///
-        /// # Security Warning
-        ///
-        /// Leaking this value may compromise the security of the OAuth2 flow.
-        ///
-        fn secret(&self) -> &T;
-    }
-}
-
 macro_rules! new_type {
     // Convenience pattern without an impl.
     (
         $(#[$attr:meta])*
-        $name:ident(
+        pub struct $name:ident(
             $(#[$type_attr:meta])*
             $type:ty
-        )
+        );
     ) => {
-        new_type![
+        new_type! {
             @new_type $(#[$attr])*,
             $name(
                 $(#[$type_attr])*
                 $type
             ),
-            concat!(
-                "Create a new `",
-                stringify!($name),
-                "` to wrap the given `",
-                stringify!($type),
-                "`."
-            ),
-            impl {}
-        ];
-    };
-    // Main entry point with an impl.
-    (
-        $(#[$attr:meta])*
-        $name:ident(
-            $(#[$type_attr:meta])*
-            $type:ty
-        )
-        impl {
-            $($item:tt)*
+            concat!("Create a new `", stringify!($name), "` to wrap the given `", stringify!($type), "`."),
         }
-    ) => {
-        new_type![
-            @new_type $(#[$attr])*,
-            $name(
-                $(#[$type_attr])*
-                $type
-            ),
-            concat!(
-                "Create a new `",
-                stringify!($name),
-                "` to wrap the given `",
-                stringify!($type),
-                "`."
-            ),
-            impl {
-                $($item)*
-            }
-        ];
     };
+
     // Actual implementation, after stringifying the #[doc] attr.
     (
         @new_type $(#[$attr:meta])*,
@@ -361,9 +274,6 @@ macro_rules! new_type {
             $type:ty
         ),
         $new_doc:expr,
-        impl {
-            $($item:tt)*
-        }
     ) => {
         $(#[$attr])*
         #[derive(Clone, Debug, PartialEq)]
@@ -372,20 +282,20 @@ macro_rules! new_type {
             $type
         );
         impl $name {
-            $($item)*
-        }
-        impl NewType<$type> for $name {
             #[doc = $new_doc]
-            fn new(s: $type) -> Self {
+            pub fn new(s: $type) -> Self {
                 $name(s)
             }
         }
+
         impl Deref for $name {
             type Target = $type;
+
             fn deref(&self) -> &$type {
                 &self.0
             }
         }
+
         impl Into<$type> for $name {
             fn into(self) -> $type {
                 self.0
@@ -397,45 +307,21 @@ macro_rules! new_type {
 macro_rules! new_secret_type {
     (
         $(#[$attr:meta])*
-        $name:ident($type:ty)
+        pub struct $name:ident($type:ty);
     ) => {
-        new_secret_type![
-            $(#[$attr])*
-            $name($type)
-            impl {}
-        ];
-    };
-    (
-        $(#[$attr:meta])*
-        $name:ident($type:ty)
-        impl {
-            $($item:tt)*
-        }
-    ) => {
-        new_secret_type![
+        new_secret_type! {
             $(#[$attr])*,
             $name($type),
-            concat!(
-                "Create a new `",
-                stringify!($name),
-                "` to wrap the given `",
-                stringify!($type),
-                "`."
-            ),
+            concat!("Create a new `", stringify!($name), "` to wrap the given `", stringify!($type), "`."),
             concat!("Get the secret contained within this `", stringify!($name), "`."),
-            impl {
-                $($item)*
-            }
-        ];
+        }
     };
+
     (
         $(#[$attr:meta])*,
         $name:ident($type:ty),
         $new_doc:expr,
         $secret_doc:expr,
-        impl {
-            $($item:tt)*
-        }
     ) => {
         $(
             #[$attr]
@@ -443,22 +329,20 @@ macro_rules! new_secret_type {
         #[derive(Clone, PartialEq)]
         pub struct $name($type);
         impl $name {
-            $($item)*
-        }
-        impl SecretNewType<$type> for $name {
             #[doc = $new_doc]
-            fn new(s: $type) -> Self {
+            pub fn new(s: $type) -> Self {
                 $name(s)
             }
-            ///
+
             #[doc = $secret_doc]
             ///
             /// # Security Warning
             ///
             /// Leaking this value may compromise the security of the OAuth2 flow.
             ///
-            fn secret(&self) -> &$type { &self.0 }
+            pub fn secret(&self) -> &$type { &self.0 }
         }
+
         impl Debug for $name {
             fn fmt(&self, f: &mut Formatter) -> Result<(), FormatterError> {
                 write!(f, concat!(stringify!($name), "([redacted])"))
@@ -467,210 +351,220 @@ macro_rules! new_secret_type {
     };
 }
 
-new_type![///
-/// Client identifier issued to the client during the registration process described by
-/// [Section 2.2](https://tools.ietf.org/html/rfc6749#section-2.2).
-///
-#[derive(Deserialize, Serialize)]
-ClientId(String)];
+new_type! {
+    /// Client identifier issued to the client during the registration process described by
+    /// [Section 2.2](https://tools.ietf.org/html/rfc6749#section-2.2).
+    #[derive(Deserialize, Serialize)]
+    pub struct ClientId(String);
+}
 
-new_type![#[derive(Deserialize, Serialize)]
-///
-/// URL of the authorization server's authorization endpoint.
-///
-AuthUrl(
-    #[serde(
-        deserialize_with = "helpers::deserialize_url",
-        serialize_with = "helpers::serialize_url"
-    )]
-    Url
-)];
-new_type![#[derive(Deserialize, Serialize)]
-///
-/// URL of the authorization server's token endpoint.
-///
-TokenUrl(
-    #[serde(
-        deserialize_with = "helpers::deserialize_url",
-        serialize_with = "helpers::serialize_url"
-    )]
-    Url
-)];
-new_type![#[derive(Deserialize, Serialize)]
-///
-/// URL of the client's redirection endpoint.
-///
-RedirectUrl(
-    #[serde(
-        deserialize_with = "helpers::deserialize_url",
-        serialize_with = "helpers::serialize_url"
-    )]
-    Url
-)];
-new_type![///
-/// Authorization endpoint response (grant) type defined in
-/// [Section 3.1.1](https://tools.ietf.org/html/rfc6749#section-3.1.1).
-///
-#[derive(Deserialize, Serialize)]
-ResponseType(String)];
-new_type![///
-/// Resource owner's username used directly as an authorization grant to obtain an access
-/// token.
-///
-ResourceOwnerUsername(String)];
+new_type! {
+    /// URL of the authorization server's authorization endpoint.
+    #[derive(Deserialize, Serialize)]
+    pub struct AuthUrl(
+        #[serde(
+            deserialize_with = "helpers::deserialize_url",
+            serialize_with = "helpers::serialize_url"
+        )]
+        Url
+    );
+}
 
-new_type![///
-/// Access token scope, as defined by the authorization server.
-///
-#[derive(Deserialize, Serialize)]
-Scope(String)];
+new_type! {
+    /// URL of the authorization server's token endpoint.
+    #[derive(Deserialize, Serialize)]
+    pub struct TokenUrl(
+        #[serde(
+            deserialize_with = "helpers::deserialize_url",
+            serialize_with = "helpers::serialize_url"
+        )]
+        Url
+    );
+}
+
+new_type! {
+    /// URL of the client's redirection endpoint.
+    #[derive(Deserialize, Serialize)]
+    pub struct RedirectUrl(
+        #[serde(
+            deserialize_with = "helpers::deserialize_url",
+            serialize_with = "helpers::serialize_url"
+        )]
+        Url
+    );
+}
+
+new_type! {
+    /// Authorization endpoint response (grant) type defined in
+    /// [Section 3.1.1](https://tools.ietf.org/html/rfc6749#section-3.1.1).
+    #[derive(Deserialize, Serialize)]
+    pub struct ResponseType(String);
+}
+
+new_type! {
+    /// Resource owner's username used directly as an authorization grant to obtain an access
+    /// token.
+    pub struct ResourceOwnerUsername(String);
+}
+
+new_type! {
+    /// Access token scope, as defined by the authorization server.
+    #[derive(Deserialize, Serialize)]
+    pub struct Scope(String);
+}
+
 impl AsRef<str> for Scope {
     fn as_ref(&self) -> &str {
         self
     }
 }
-new_type![///
-/// Code Challenge used for [PKCE]((https://tools.ietf.org/html/rfc7636)) protection via the
-/// `code_challenge` parameter.
-///
-#[derive(Deserialize, Serialize)]
-PkceCodeChallengeS256(String)];
-new_type![///
-/// Code Challenge Method used for [PKCE]((https://tools.ietf.org/html/rfc7636)) protection
-/// via the `code_challenge_method` parameter.
-///
-#[derive(Deserialize, Serialize)]
-PkceCodeChallengeMethod(String)];
 
-new_secret_type![///
-/// Client password issued to the client during the registration process described by
-/// [Section 2.2](https://tools.ietf.org/html/rfc6749#section-2.2).
-///
-#[derive(Deserialize, Serialize)]
-ClientSecret(String)];
-new_secret_type![
-    ///
+new_type! {
+    /// Code Challenge used for [PKCE]((https://tools.ietf.org/html/rfc7636)) protection via the
+    /// `code_challenge` parameter.
+    #[derive(Deserialize, Serialize)]
+    pub struct PkceCodeChallengeS256(String);
+}
+
+new_type! {
+    /// Code Challenge Method used for [PKCE]((https://tools.ietf.org/html/rfc7636)) protection
+    /// via the `code_challenge_method` parameter.
+    #[derive(Deserialize, Serialize)]
+    pub struct PkceCodeChallengeMethod(String);
+}
+
+new_secret_type! {
+    /// Client password issued to the client during the registration process described by
+    /// [Section 2.2](https://tools.ietf.org/html/rfc6749#section-2.2).
+    #[derive(Deserialize, Serialize)]
+    pub struct ClientSecret(String);
+}
+
+new_secret_type! {
     /// Value used for [CSRF]((https://tools.ietf.org/html/rfc6749#section-10.12)) protection
     /// via the `state` parameter.
-    ///
     #[must_use]
     #[derive(Deserialize, Serialize)]
-    CsrfToken(String)
-    impl {
-        ///
-        /// Generate a new random, base64-encoded 128-bit CSRF token.
-        ///
-        pub fn new_random() -> Self {
-            CsrfToken::new_random_len(16)
-        }
-        ///
-        /// Generate a new random, base64-encoded CSRF token of the specified length.
-        ///
-        /// # Arguments
-        ///
-        /// * `num_bytes` - Number of random bytes to generate, prior to base64-encoding.
-        ///
-        pub fn new_random_len(num_bytes: u32) -> Self {
-            let random_bytes: Vec<u8> = (0..num_bytes).map(|_| thread_rng().gen::<u8>()).collect();
-            CsrfToken::new(base64::encode_config(&random_bytes, base64::URL_SAFE_NO_PAD))
-        }
-    }
-];
-new_secret_type![
+    pub struct CsrfToken(String);
+}
+
+impl CsrfToken {
     ///
+    /// Generate a new random, base64-encoded 128-bit CSRF token.
+    ///
+    pub fn new_random() -> Self {
+        CsrfToken::new_random_len(16)
+    }
+    ///
+    /// Generate a new random, base64-encoded CSRF token of the specified length.
+    ///
+    /// # Arguments
+    ///
+    /// * `num_bytes` - Number of random bytes to generate, prior to base64-encoding.
+    ///
+    pub fn new_random_len(num_bytes: u32) -> Self {
+        let random_bytes: Vec<u8> = (0..num_bytes).map(|_| thread_rng().gen::<u8>()).collect();
+        CsrfToken::new(base64::encode_config(
+            &random_bytes,
+            base64::URL_SAFE_NO_PAD,
+        ))
+    }
+}
+
+new_secret_type! {
     /// Code Verifier used for [PKCE]((https://tools.ietf.org/html/rfc7636)) protection via the
     /// `code_verifier` parameter. The value must have a minimum length of 43 characters and a
     /// maximum length of 128 characters.  Each character must be ASCII alphanumeric or one of
     /// the characters "-" / "." / "_" / "~".
-    ///
     #[derive(Deserialize, Serialize)]
-    PkceCodeVerifierS256(String)
-    impl {
-        ///
-        /// Generate a new random, base64-encoded code verifier.
-        ///
-        pub fn new_random() -> Self {
-            PkceCodeVerifierS256::new_random_len(32)
-        }
-        ///
-        /// Generate a new random, base64-encoded code verifier.
-        ///
-        /// # Arguments
-        ///
-        /// * `num_bytes` - Number of random bytes to generate, prior to base64-encoding.
-        ///   The value must be in the range 32 to 96 inclusive in order to generate a verifier
-        ///   with a suitable length.
-        ///
-        pub fn new_random_len(num_bytes: u32) -> Self {
-            // The RFC specifies that the code verifier must have "a minimum length of 43
-            // characters and a maximum length of 128 characters".
-            // This implies 32-96 octets of random data to be base64 encoded.
-            assert!(num_bytes >= 32 && num_bytes <= 96);
-            let random_bytes: Vec<u8> = (0..num_bytes).map(|_| thread_rng().gen::<u8>()).collect();
-            let code = base64::encode_config(&random_bytes, base64::URL_SAFE_NO_PAD);
-            assert!(code.len() >=43 && code.len() <= 128);
-            PkceCodeVerifierS256::new(code)
-        }
-        ///
-        /// Return the code challenge for the code verifier.
-        ///
-        pub fn code_challenge(&self) -> PkceCodeChallengeS256 {
-            let digest = Sha256::digest(self.secret().as_bytes());
-            PkceCodeChallengeS256::new(base64::encode_config(&digest, base64::URL_SAFE_NO_PAD))
-        }
+    pub struct PkceCodeVerifierS256(String);
+}
 
-        ///
-        /// Return the code challenge method for this code verifier.
-        ///
-        pub fn code_challenge_method() -> PkceCodeChallengeMethod {
-            PkceCodeChallengeMethod::new("S256".to_string())
-        }
-
-        ///
-        /// Return the extension params used for authorize_url.
-        ///
-        pub fn authorize_url_params(&self) -> Vec<(&'static str, String)> {
-            vec![
-                (
-                    "code_challenge_method",
-                    PkceCodeVerifierS256::code_challenge_method().into(),
-                ),
-                ("code_challenge", self.code_challenge().into()),
-            ]
-        }
+impl PkceCodeVerifierS256 {
+    ///
+    /// Generate a new random, base64-encoded code verifier.
+    ///
+    pub fn new_random() -> Self {
+        PkceCodeVerifierS256::new_random_len(32)
     }
-];
-new_secret_type![///
-/// Authorization code returned from the authorization endpoint.
-///
-#[derive(Deserialize, Serialize)]
-AuthorizationCode(String)];
-new_secret_type![///
-/// Refresh token used to obtain a new access token (if supported by the authorization server).
-///
-#[derive(Deserialize, Serialize)]
-RefreshToken(String)];
-new_secret_type![///
-/// Access token returned by the token endpoint and used to access protected resources.
-///
-#[derive(Deserialize, Serialize)]
-AccessToken(String)];
-new_secret_type![///
-/// Resource owner's password used directly as an authorization grant to obtain an access
-/// token.
-///
-ResourceOwnerPassword(String)];
+    ///
+    /// Generate a new random, base64-encoded code verifier.
+    ///
+    /// # Arguments
+    ///
+    /// * `num_bytes` - Number of random bytes to generate, prior to base64-encoding.
+    ///   The value must be in the range 32 to 96 inclusive in order to generate a verifier
+    ///   with a suitable length.
+    ///
+    pub fn new_random_len(num_bytes: u32) -> Self {
+        // The RFC specifies that the code verifier must have "a minimum length of 43
+        // characters and a maximum length of 128 characters".
+        // This implies 32-96 octets of random data to be base64 encoded.
+        assert!(num_bytes >= 32 && num_bytes <= 96);
+        let random_bytes: Vec<u8> = (0..num_bytes).map(|_| thread_rng().gen::<u8>()).collect();
+        let code = base64::encode_config(&random_bytes, base64::URL_SAFE_NO_PAD);
+        assert!(code.len() >= 43 && code.len() <= 128);
+        PkceCodeVerifierS256::new(code)
+    }
+    ///
+    /// Return the code challenge for the code verifier.
+    ///
+    pub fn code_challenge(&self) -> PkceCodeChallengeS256 {
+        let digest = Sha256::digest(self.secret().as_bytes());
+        PkceCodeChallengeS256::new(base64::encode_config(&digest, base64::URL_SAFE_NO_PAD))
+    }
+
+    ///
+    /// Return the code challenge method for this code verifier.
+    ///
+    pub fn code_challenge_method() -> PkceCodeChallengeMethod {
+        PkceCodeChallengeMethod::new("S256".to_string())
+    }
+
+    ///
+    /// Return the extension params used for authorize_url.
+    ///
+    pub fn authorize_url_params(&self) -> Vec<(&'static str, String)> {
+        vec![
+            (
+                "code_challenge_method",
+                PkceCodeVerifierS256::code_challenge_method().into(),
+            ),
+            ("code_challenge", self.code_challenge().into()),
+        ]
+    }
+}
+
+new_secret_type! {
+    /// Authorization code returned from the authorization endpoint.
+    #[derive(Deserialize, Serialize)]
+    pub struct AuthorizationCode(String);
+}
+
+new_secret_type! {
+    /// Refresh token used to obtain a new access token (if supported by the authorization server).
+    #[derive(Deserialize, Serialize)]
+    pub struct RefreshToken(String);
+}
+
+new_secret_type! {
+    /// Access token returned by the token endpoint and used to access protected resources.
+    #[derive(Deserialize, Serialize)]
+    pub struct AccessToken(String);
+}
+
+new_secret_type! {
+    /// Resource owner's password used directly as an authorization grant to obtain an access
+    /// token.
+    pub struct ResourceOwnerPassword(String);
+}
 
 ///
 /// Stores the configuration for an OAuth2 client.
 ///
 #[derive(Clone, Debug)]
-pub struct Client<TE, TR, TT>
-where
-    TE: ErrorResponseType,
-    TR: TokenResponse<TT>,
-    TT: TokenType,
-{
+pub struct Client {
+    client: reqwest::r#async::Client,
     client_id: ClientId,
     client_secret: Option<ClientSecret>,
     auth_url: AuthUrl,
@@ -678,17 +572,9 @@ where
     token_url: Option<TokenUrl>,
     scopes: Vec<Scope>,
     redirect_url: Option<RedirectUrl>,
-    phantom_te: PhantomData<TE>,
-    phantom_tr: PhantomData<TR>,
-    phantom_tt: PhantomData<TT>,
 }
 
-impl<TE, TR, TT> Client<TE, TR, TT>
-where
-    TE: ErrorResponseType,
-    TR: TokenResponse<TT>,
-    TT: TokenType,
-{
+impl Client {
     ///
     /// Initializes an OAuth2 client with the fields common to most OAuth2 flows.
     ///
@@ -716,6 +602,7 @@ where
         token_url: Option<TokenUrl>,
     ) -> Self {
         Client {
+            client: reqwest::r#async::Client::new(),
             client_id,
             client_secret,
             auth_url,
@@ -723,9 +610,6 @@ where
             token_url,
             scopes: Vec::new(),
             redirect_url: None,
-            phantom_te: PhantomData,
-            phantom_tr: PhantomData,
-            phantom_tt: PhantomData,
         }
     }
 
@@ -919,41 +803,10 @@ where
     ///
     /// See https://tools.ietf.org/html/rfc6749#section-4.1.3
     ///
-    pub fn exchange_code(&self, code: AuthorizationCode) -> Result<TR, RequestTokenError<TE>> {
-        self.exchange_code_extension::<&str>(code, &[])
-    }
-
-    ///
-    /// Exchanges a code produced by a successful authorization process with an access token.
-    ///
-    /// Acquires ownership of the `code` because authorization codes may only be used to retrieve
-    /// an access token from the authorization server.
-    ///
-    /// See https://tools.ietf.org/html/rfc6749#section-4.1.3
-    ///
-    pub fn exchange_code_extension<T>(
-        &self,
-        code: AuthorizationCode,
-        extra_params: &[(&str, T)],
-    ) -> Result<TR, RequestTokenError<TE>>
-    where
-        T: AsRef<str> + Clone,
-    {
-        // Make Clippy happy since we're intentionally taking ownership.
-        let code_owned = code;
-        let mut params: Vec<(&str, &str)> = vec![
-            ("grant_type", "authorization_code"),
-            ("code", code_owned.secret()),
-        ];
-
-        params.extend_from_slice(
-            &extra_params
-                .iter()
-                .map(|&(k, ref v)| (k, v.as_ref()))
-                .collect::<Vec<(&str, &str)>>(),
-        );
-
-        self.request_token(params)
+    pub fn exchange_code<'a>(&'a self, code: AuthorizationCode) -> RequestBuilder<'a> {
+        self.request_token()
+            .param("grant_type", "authorization_code")
+            .param("code", code.secret().to_string())
     }
 
     ///
@@ -961,36 +814,31 @@ where
     ///
     /// See https://tools.ietf.org/html/rfc6749#section-4.3.2
     ///
-    pub fn exchange_password(
-        &self,
+    pub fn exchange_password<'a>(
+        &'a self,
         username: &ResourceOwnerUsername,
         password: &ResourceOwnerPassword,
-    ) -> Result<TR, RequestTokenError<TE>> {
+    ) -> RequestBuilder<'a> {
+        let mut builder = self
+            .request_token()
+            .param("grant_type", "password")
+            .param("username", username.to_string())
+            .param("password", password.secret().to_string());
+
         // Generate the space-delimited scopes String before initializing params so that it has
         // a long enough lifetime.
-        let scopes_opt = if !self.scopes.is_empty() {
-            Some(
-                self.scopes
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            )
-        } else {
-            None
-        };
+        if !self.scopes.is_empty() {
+            let scopes = self
+                .scopes
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join(" ");
 
-        let mut params = vec![
-            ("grant_type", "password"),
-            ("username", username),
-            ("password", password.secret()),
-        ];
-
-        if let Some(ref scopes) = scopes_opt {
-            params.push(("scope", scopes));
+            builder = builder.param("scope", scopes);
         }
 
-        self.request_token(params)
+        builder
     }
 
     ///
@@ -998,213 +846,189 @@ where
     ///
     /// See https://tools.ietf.org/html/rfc6749#section-4.4.2
     ///
-    pub fn exchange_client_credentials(&self) -> Result<TR, RequestTokenError<TE>> {
+    pub fn exchange_client_credentials<'a>(&'a self) -> RequestBuilder<'a> {
+        let mut builder = self
+            .request_token()
+            .param("grant_type", "client_credentials");
+
         // Generate the space-delimited scopes String before initializing params so that it has
         // a long enough lifetime.
-        let scopes_opt = if !self.scopes.is_empty() {
-            Some(
-                self.scopes
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            )
-        } else {
-            None
+        if !self.scopes.is_empty() {
+            let scopes = self
+                .scopes
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            builder = builder.param("scopes", scopes);
+        }
+
+        builder
+    }
+
+    ///
+    /// Exchanges a refresh token for an access token
+    ///
+    /// See https://tools.ietf.org/html/rfc6749#section-6
+    ///
+    pub fn exchange_refresh_token(&self, refresh_token: &RefreshToken) -> RequestBuilder {
+        self.request_token()
+            .param("grant_type", "refresh_token")
+            .param("refresh_token", refresh_token.secret().to_string())
+    }
+
+    /// Construct a request builder for the token URL.
+    fn request_token(&self) -> RequestBuilder<'_> {
+        RequestBuilder {
+            client: &self.client,
+            token_url: self.token_url.as_ref(),
+            auth_type: self.auth_type,
+            client_id: &self.client_id,
+            client_secret: self.client_secret.as_ref(),
+            redirect_url: self.redirect_url.as_ref(),
+            params: vec![],
+        }
+    }
+}
+
+/// A token request that is in progress.
+pub struct RequestBuilder<'a> {
+    client: &'a reqwest::r#async::Client,
+    token_url: Option<&'a TokenUrl>,
+    auth_type: AuthType,
+    client_id: &'a ClientId,
+    client_secret: Option<&'a ClientSecret>,
+    /// Configured redirect URL.
+    redirect_url: Option<&'a RedirectUrl>,
+    /// Extra parameters.
+    params: Vec<(Cow<'a, str>, Cow<'a, str>)>,
+}
+
+impl<'a> RequestBuilder<'a> {
+    /// Set an additional request param.
+    pub fn param(mut self, key: impl Into<Cow<'a, str>>, value: impl Into<Cow<'a, str>>) -> Self {
+        self.params.push((key.into(), value.into()));
+        self
+    }
+
+    /// Execute the token request.
+    pub fn execute<T>(self) -> impl Future<Item = T, Error = RequestTokenError<T::ErrorField>>
+    where
+        T: TokenResponse,
+    {
+        use reqwest::{
+            header,
+            r#async::{Body, Decoder},
+            Method,
         };
 
-        let mut params: Vec<(&str, &str)> = vec![("grant_type", "client_credentials")];
+        let token_url = self
+            .token_url
+            .ok_or_else(||
+                // Arguably, it could be better to panic in this case. However, there may be
+                // situations where the library user gets the authorization server's configuration
+                // dynamically. In those cases, it would be preferable to return an `Err` rather
+                // than panic. An example situation where this might arise is OpenID Connect
+                // discovery.
+                RequestTokenError::<T::ErrorField>::Other("token_url must not be `None`".to_string()))
+            .unwrap();
 
-        if let Some(ref scopes) = scopes_opt {
-            params.push(("scope", scopes));
-        }
-        self.request_token(params)
-    }
+        let mut request = self
+            .client
+            .request(Method::POST, &token_url.to_string()[..]);
 
-    ///
-    /// Exchanges a refresh token for an access token
-    ///
-    /// See https://tools.ietf.org/html/rfc6749#section-6
-    ///
-    pub fn exchange_refresh_token(
-        &self,
-        refresh_token: &RefreshToken,
-    ) -> Result<TR, RequestTokenError<TE>> {
-        self.exchange_refresh_token_extension::<&str>(refresh_token, &[])
-    }
-
-    ///
-    /// Exchanges a refresh token for an access token
-    ///
-    /// See https://tools.ietf.org/html/rfc6749#section-6
-    ///
-    pub fn exchange_refresh_token_extension<T>(
-        &self,
-        refresh_token: &RefreshToken,
-        extra_params: &[(&str, T)],
-    ) -> Result<TR, RequestTokenError<TE>>
-    where
-        T: AsRef<str> + Clone,
-    {
-        let mut params: Vec<(&str, &str)> = vec![
-            ("grant_type", "refresh_token"),
-            ("refresh_token", refresh_token.secret()),
-        ];
-
-        params.extend_from_slice(
-            &extra_params
-                .iter()
-                .map(|&(k, ref v)| (k, v.as_ref()))
-                .collect::<Vec<(&str, &str)>>(),
+        // Section 5.1 of RFC 6749 (https://tools.ietf.org/html/rfc6749#section-5.1) only permits
+        // JSON responses for this request. Some providers such as GitHub have off-spec behavior
+        // and not only support different response formats, but have non-JSON defaults. Explicitly
+        // request JSON here.
+        request = request.header(
+            header::ACCEPT,
+            header::HeaderValue::from_static(CONTENT_TYPE_JSON),
         );
 
-        self.request_token(params)
-    }
-
-    fn post_request_token<'a, 'b: 'a>(
-        &'b self,
-        token_url: &TokenUrl,
-        mut params: Vec<(&'b str, &'a str)>,
-    ) -> Result<RequestTokenResponse, curl::Error> {
-        let mut easy = Easy::new();
+        let mut form = url::form_urlencoded::Serializer::new(String::new());
 
         // FIXME: add support for auth extensions? e.g., client_secret_jwt and private_key_jwt
         match self.auth_type {
             AuthType::RequestBody => {
-                params.push(("client_id", &self.client_id));
-                if let Some(ref client_secret) = self.client_secret {
-                    params.push(("client_secret", client_secret.secret()));
+                form.append_pair("client_id", self.client_id.as_str());
+
+                if let Some(client_secret) = self.client_secret {
+                    form.append_pair("client_secret", client_secret.secret().as_str());
                 }
             }
             AuthType::BasicAuth => {
                 // Section 2.3.1 of RFC 6749 requires separately url-encoding the id and secret
                 // before using them as HTTP Basic auth username and password. Note that this is
                 // not standard for ordinary Basic auth, so curl won't do it for us.
-                let encoded_id = easy.url_encode(&self.client_id.as_bytes());
-                easy.username(&encoded_id)?;
+                let username = url_encode(self.client_id.as_str());
 
-                if let Some(ref client_secret) = self.client_secret {
-                    let encoded_secret = easy.url_encode(client_secret.secret().as_bytes());
-                    easy.password(&encoded_secret)?;
-                }
+                let password = match self.client_secret {
+                    Some(client_secret) => Some(url_encode(client_secret.secret().as_str())),
+                    None => None,
+                };
+
+                request = request.basic_auth(&username, password.as_ref());
             }
+        }
+
+        for (key, value) in self.params {
+            form.append_pair(key.as_ref(), value.as_ref());
         }
 
         if let Some(ref redirect_url) = self.redirect_url {
-            params.push(("redirect_uri", redirect_url.as_str()));
+            form.append_pair("redirect_uri", redirect_url.as_str());
         }
 
-        let form = url::form_urlencoded::Serializer::new(String::new())
-            .extend_pairs(params)
-            .finish()
-            .into_bytes();
-        let mut form_slice = &form[..];
+        request = request.header(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static("application/x-www-form-urlencoded"),
+        );
+        request = request.body(Body::from(form.finish().into_bytes()));
 
-        easy.url(&token_url.to_string()[..])?;
+        request
+            .send()
+            .map_err(RequestTokenError::Client)
+            .and_then(|mut res| {
+                let body = std::mem::replace(res.body_mut(), Decoder::empty());
+                body.concat2()
+                    .map(move |body| (res, body))
+                    .map_err(RequestTokenError::Client)
+            })
+            .and_then(|(res, body)| {
+                let status = res.status();
 
-        // Section 5.1 of RFC 6749 (https://tools.ietf.org/html/rfc6749#section-5.1) only permits
-        // JSON responses for this request. Some providers such as GitHub have off-spec behavior
-        // and not only support different response formats, but have non-JSON defaults. Explicitly
-        // request JSON here.
-        let mut headers = curl::easy::List::new();
-        let accept_header = format!("Accept: {}", CONTENT_TYPE_JSON);
-        headers.append(&accept_header)?;
-        easy.http_headers(headers)?;
-
-        easy.post(true)?;
-        easy.post_field_size(form.len() as u64)?;
-
-        let mut data = Vec::new();
-        {
-            let mut transfer = easy.transfer();
-
-            transfer.read_function(|buf| Ok(form_slice.read(buf).unwrap_or(0)))?;
-
-            transfer.write_function(|new_data| {
-                data.extend_from_slice(new_data);
-                Ok(new_data.len())
-            })?;
-
-            transfer.perform()?;
-        }
-
-        let http_status = easy.response_code()?;
-        let content_type = easy.content_type()?;
-
-        Ok(RequestTokenResponse {
-            http_status,
-            content_type: content_type.map(|s| s.to_string()),
-            response_body: data,
-        })
-    }
-
-    fn request_token(&self, params: Vec<(&str, &str)>) -> Result<TR, RequestTokenError<TE>> {
-        let token_url = self.token_url.as_ref().ok_or_else(||
-                // Arguably, it could be better to panic in this case. However, there may be
-                // situations where the library user gets the authorization server's configuration
-                // dynamically. In those cases, it would be preferable to return an `Err` rather
-                // than panic. An example situation where this might arise is OpenID Connect
-                // discovery.
-                RequestTokenError::Other("token_url must not be `None`".to_string()))?;
-        let token_response = self
-            .post_request_token(token_url, params)
-            .map_err(RequestTokenError::Request)?;
-        if token_response.http_status != 200 {
-            let reason = token_response.response_body.as_slice();
-            if reason.is_empty() {
-                return Err(RequestTokenError::Other(
-                    "Server returned empty error response".to_string(),
-                ));
-            } else {
-                let error = match serde_json::from_slice::<ErrorResponse<TE>>(reason) {
-                    Ok(error) => RequestTokenError::ServerResponse(error),
-                    Err(error) => RequestTokenError::Parse(error, reason.to_vec()),
-                };
-                return Err(error);
-            }
-        }
-
-        // Validate that the response Content-Type is JSON.
-        token_response
-            .content_type
-            .map_or(Ok(()), |content_type|
-                // Section 3.1.1.1 of RFC 7231 indicates that media types are case insensitive and
-                // may be followed by optional whitespace and/or a parameter (e.g., charset).
-                // See https://tools.ietf.org/html/rfc7231#section-3.1.1.1.
-                if !content_type.to_lowercase().starts_with(CONTENT_TYPE_JSON) {
-                    Err(
-                        RequestTokenError::Other(
-                            format!(
-                                "Unexpected response Content-Type: `{}`, should be `{}`",
-                                content_type,
-                                CONTENT_TYPE_JSON
-                            )
-                        )
-                    )
-                } else {
-                    Ok(())
+                if !status.is_success() {
+                    if body.is_empty() {
+                        return Err(RequestTokenError::Other(
+                            "Server returned empty error response".to_string(),
+                        ));
+                    } else {
+                        let error = match serde_json::from_slice::<ErrorResponse<T::ErrorField>>(
+                            body.as_ref(),
+                        ) {
+                            Ok(error) => RequestTokenError::ServerResponse(error),
+                            Err(error) => RequestTokenError::Parse(error, body.as_ref().to_vec()),
+                        };
+                        return Err(error);
+                    }
                 }
-            )?;
 
-        if token_response.response_body.is_empty() {
-            Err(RequestTokenError::Other(
-                "Server returned empty response body".to_string(),
-            ))
-        } else {
-            let response_body = token_response.response_body.as_slice();
-            serde_json::from_slice(response_body)
-                .map_err(|e| RequestTokenError::Parse(e, response_body.to_vec()))
-        }
+                if body.is_empty() {
+                    Err(RequestTokenError::Other(
+                        "Server returned empty response body".to_string(),
+                    ))
+                } else {
+                    serde_json::from_slice(body.as_ref())
+                        .map_err(|e| RequestTokenError::Parse(e, body.as_ref().to_vec()))
+                }
+            })
     }
 }
 
-///
-/// Private struct returned by `post_request_token`.
-///
-struct RequestTokenResponse {
-    http_status: u32,
-    content_type: Option<String>,
-    response_body: Vec<u8>,
+fn url_encode(s: &str) -> String {
+    url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>()
 }
 
 ///
@@ -1232,10 +1056,12 @@ impl ExtraTokenFields for EmptyExtraTokenFields {}
 /// separately from the `StandardTokenResponse` struct to support customization by clients,
 /// such as supporting interoperability with non-standards-complaint OAuth2 providers.
 ///
-pub trait TokenResponse<TT>: Clone + Debug + DeserializeOwned + PartialEq + Serialize
-where
-    TT: TokenType,
-{
+pub trait TokenResponse: Clone + Debug + DeserializeOwned + PartialEq + Serialize {
+    /// The type of the token.
+    type TokenType: TokenType;
+    /// The type of the error field in the response.
+    type ErrorField: ErrorField;
+
     ///
     /// REQUIRED. The access token issued by the authorization server.
     ///
@@ -1245,7 +1071,7 @@ where
     /// [Section 7.1](https://tools.ietf.org/html/rfc6749#section-7.1).
     /// Value is case insensitive and deserialized to the generic `TokenType` parameter.
     ///
-    fn token_type(&self) -> &TT;
+    fn token_type(&self) -> &Self::TokenType;
     ///
     /// RECOMMENDED. The lifetime in seconds of the access token. For example, the value 3600
     /// denotes that the access token will expire in one hour from the time the response was
@@ -1311,11 +1137,14 @@ where
     }
 }
 
-impl<EF, TT> TokenResponse<TT> for StandardTokenResponse<EF, TT>
+impl<EF, TT> TokenResponse for StandardTokenResponse<EF, TT>
 where
     EF: ExtraTokenFields,
     TT: TokenType,
 {
+    type TokenType = TT;
+    type ErrorField = basic::BasicErrorField;
+
     ///
     /// REQUIRED. The access token issued by the authorization server.
     ///
@@ -1366,8 +1195,8 @@ where
 /// this error type. This value must match the error type from the relevant OAuth 2.0 standards
 /// (RFC 6749 or an extension).
 ///
-pub trait ErrorResponseType:
-    Clone + Debug + DeserializeOwned + Display + PartialEq + Send + Serialize + Sync
+pub trait ErrorField:
+    'static + Clone + Debug + DeserializeOwned + Display + PartialEq + Send + Serialize + Sync
 {
 }
 
@@ -1376,12 +1205,12 @@ pub trait ErrorResponseType:
 ///
 /// The fields in this structure are defined in
 /// [Section 5.2 of RFC 6749](https://tools.ietf.org/html/rfc6749#section-5.2). This
-/// trait is parameterized by a `ErrorResponseType` to support error types specific to future OAuth2
+/// trait is parameterized by a `ErrorField` to support error types specific to future OAuth2
 /// authentication schemes and extensions.
 ///
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct ErrorResponse<T: ErrorResponseType> {
-    #[serde(bound = "T: ErrorResponseType")]
+pub struct ErrorResponse<T: ErrorField> {
+    #[serde(bound = "T: ErrorField")]
     error: T,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1391,10 +1220,10 @@ pub struct ErrorResponse<T: ErrorResponseType> {
     error_uri: Option<String>,
 }
 
-impl<T: ErrorResponseType> ErrorResponse<T> {
+impl<T: ErrorField> ErrorResponse<T> {
     ///
     /// REQUIRED. A single ASCII error code deserialized to the generic parameter
-    /// `ErrorResponseType`.
+    /// `ErrorField`.
     ///
     pub fn error(&self) -> &T {
         &self.error
@@ -1415,7 +1244,7 @@ impl<T: ErrorResponseType> ErrorResponse<T> {
     }
 }
 
-impl<TE: ErrorResponseType> Display for ErrorResponse<TE> {
+impl<TE: ErrorField> Display for ErrorResponse<TE> {
     fn fmt(&self, f: &mut Formatter) -> Result<(), FormatterError> {
         let mut formatted = self.error().to_string();
 
@@ -1437,19 +1266,16 @@ impl<TE: ErrorResponseType> Display for ErrorResponse<TE> {
 /// Error encountered while requesting access token.
 ///
 #[derive(Debug, Fail)]
-pub enum RequestTokenError<T: ErrorResponseType + Send + Sync + 'static> {
+pub enum RequestTokenError<T: ErrorField> {
     ///
     /// Error response returned by authorization server. Contains the parsed `ErrorResponse`
     /// returned by the server.
     ///
     #[fail(display = "Server returned error response `{}`", _0)]
     ServerResponse(ErrorResponse<T>),
-    ///
-    /// An error occurred while sending the request or receiving the response (e.g., network
-    /// connectivity failed).
-    ///
-    #[fail(display = "Request failed")]
-    Request(#[cause] curl::Error),
+    /// A client error that occured.
+    #[fail(display = "Client error: {}", _0)]
+    Client(reqwest::Error),
     ///
     /// Failed to parse server response. Parse errors may occur while parsing either successful
     /// or error responses.
@@ -1468,21 +1294,15 @@ pub enum RequestTokenError<T: ErrorResponseType + Send + Sync + 'static> {
 /// ([RFC 6749](https://tools.ietf.org/html/rfc6749)).
 ///
 pub mod basic {
-    extern crate serde_json;
-
+    use serde::{Deserialize, Serialize};
     use std::fmt::Error as FormatterError;
     use std::fmt::{Debug, Display, Formatter};
 
     use super::helpers;
     use super::{
-        Client, EmptyExtraTokenFields, ErrorResponse, ErrorResponseType, RequestTokenError,
-        StandardTokenResponse, TokenType,
+        EmptyExtraTokenFields, ErrorField, ErrorResponse, RequestTokenError, StandardTokenResponse,
+        TokenType,
     };
-
-    ///
-    /// Basic OAuth2 client specialization, suitable for most applications.
-    ///
-    pub type BasicClient = Client<BasicErrorResponseType, BasicTokenResponse, BasicTokenType>;
 
     ///
     /// Basic OAuth2 authorization token types.
@@ -1516,7 +1336,7 @@ pub mod basic {
     ///
     #[derive(Clone, Deserialize, PartialEq, Serialize)]
     #[serde(rename_all = "snake_case")]
-    pub enum BasicErrorResponseType {
+    pub enum BasicErrorField {
         ///
         /// The request is missing a required parameter, includes an unsupported parameter value
         /// (other than grant type), repeats a parameter, includes multiple credentials, utilizes
@@ -1549,15 +1369,15 @@ pub mod basic {
         InvalidScope,
     }
 
-    impl ErrorResponseType for BasicErrorResponseType {}
+    impl ErrorField for BasicErrorField {}
 
-    impl Debug for BasicErrorResponseType {
+    impl Debug for BasicErrorField {
         fn fmt(&self, f: &mut Formatter) -> Result<(), FormatterError> {
             Display::fmt(self, f)
         }
     }
 
-    impl Display for BasicErrorResponseType {
+    impl Display for BasicErrorField {
         fn fmt(&self, f: &mut Formatter) -> Result<(), FormatterError> {
             write!(f, "{}", helpers::variant_name(&self))
         }
@@ -1566,12 +1386,12 @@ pub mod basic {
     ///
     /// Error response specialization for basic OAuth2 implementation.
     ///
-    pub type BasicErrorResponse = ErrorResponse<BasicErrorResponseType>;
+    pub type BasicErrorResponse = ErrorResponse<BasicErrorField>;
 
     ///
     /// Token error specialization for basic OAuth2 implementation.
     ///
-    pub type BasicRequestTokenError = RequestTokenError<BasicErrorResponseType>;
+    pub type BasicRequestTokenError = RequestTokenError<BasicErrorField>;
 }
 
 ///
@@ -1580,7 +1400,7 @@ pub mod basic {
 pub mod insecure {
     use url::Url;
 
-    use super::{Client, ErrorResponseType, TokenResponse, TokenType};
+    use super::Client;
 
     ///
     /// Produces the full authorization URL used by the
@@ -1593,12 +1413,7 @@ pub mod insecure {
     /// [Cross-Site Request Forgery](https://tools.ietf.org/html/rfc6749#section-10.12) attacks.
     /// It is highly recommended to use the `Client::authorize_url` function instead.
     ///
-    pub fn authorize_url<TE, TR, TT>(client: &Client<TE, TR, TT>) -> Url
-    where
-        TE: ErrorResponseType,
-        TR: TokenResponse<TT>,
-        TT: TokenType,
-    {
+    pub fn authorize_url(client: &Client) -> Url {
         client.authorize_url_impl::<&str>("code", None, None)
     }
 
@@ -1612,12 +1427,7 @@ pub mod insecure {
     /// [Cross-Site Request Forgery](https://tools.ietf.org/html/rfc6749#section-10.12) attacks.
     /// It is highly recommended to use the `Client::authorize_url_implicit` function instead.
     ///
-    pub fn authorize_url_implicit<TE, TR, TT>(client: &Client<TE, TR, TT>) -> Url
-    where
-        TE: ErrorResponseType,
-        TR: TokenResponse<TT>,
-        TT: TokenType,
-    {
+    pub fn authorize_url_implicit(client: &Client) -> Url {
         client.authorize_url_impl::<&str>("token", None, None)
     }
 }

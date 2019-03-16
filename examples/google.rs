@@ -18,10 +18,11 @@ extern crate oauth2;
 extern crate rand;
 extern crate url;
 
-use oauth2::basic::BasicClient;
 use oauth2::prelude::*;
+use oauth2::Client;
 use oauth2::{
-    AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, RedirectUrl, Scope, TokenUrl,
+    basic::BasicTokenResponse, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken,
+    RedirectUrl, Scope, TokenUrl,
 };
 use std::env;
 use std::io::{BufRead, BufReader, Write};
@@ -46,7 +47,7 @@ fn main() {
     );
 
     // Set up the config for the Google OAuth2 process.
-    let client = BasicClient::new(
+    let client = Client::new(
         google_client_id,
         Some(google_client_secret),
         auth_url,
@@ -126,8 +127,12 @@ fn main() {
                 csrf_state.secret()
             );
 
+            let mut runtime =
+                tokio::runtime::current_thread::Runtime::new().expect("failed to setup runtime");
+
             // Exchange the code with a token.
-            let token = client.exchange_code(code);
+            let token =
+                runtime.block_on(client.exchange_code(code).execute::<BasicTokenResponse>());
 
             println!("Google returned the following token:\n{:?}\n", token);
 

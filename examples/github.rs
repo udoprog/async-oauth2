@@ -18,11 +18,10 @@ extern crate oauth2;
 extern crate rand;
 extern crate url;
 
-use oauth2::basic::BasicClient;
 use oauth2::prelude::*;
 use oauth2::{
-    AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, RedirectUrl, Scope,
-    TokenResponse, TokenUrl,
+    basic::BasicTokenResponse, AuthUrl, AuthorizationCode, Client, ClientId, ClientSecret,
+    CsrfToken, RedirectUrl, Scope, TokenResponse as _, TokenUrl,
 };
 use std::env;
 use std::io::{BufRead, BufReader, Write};
@@ -47,7 +46,7 @@ fn main() {
     );
 
     // Set up the config for the Github OAuth2 process.
-    let client = BasicClient::new(
+    let client = Client::new(
         github_client_id,
         Some(github_client_secret),
         auth_url,
@@ -123,8 +122,11 @@ fn main() {
                 csrf_state.secret()
             );
 
+            let mut runtime =
+                tokio::runtime::current_thread::Runtime::new().expect("failed to setup runtime");
             // Exchange the code with a token.
-            let token_res = client.exchange_code(code);
+            let token_res =
+                runtime.block_on(client.exchange_code(code).execute::<BasicTokenResponse>());
 
             println!("Github returned the following token:\n{:?}\n", token_res);
 

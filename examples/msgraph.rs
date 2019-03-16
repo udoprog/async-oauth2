@@ -27,11 +27,10 @@ extern crate oauth2;
 extern crate rand;
 extern crate url;
 
-use oauth2::basic::BasicClient;
 use oauth2::prelude::*;
 use oauth2::{
-    AuthType, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeVerifierS256,
-    RedirectUrl, ResponseType, Scope, TokenUrl,
+    basic::BasicTokenResponse, AuthType, AuthUrl, AuthorizationCode, Client, ClientId,
+    ClientSecret, CsrfToken, PkceCodeVerifierS256, RedirectUrl, ResponseType, Scope, TokenUrl,
 };
 use std::env;
 use std::io::{BufRead, BufReader, Write};
@@ -56,7 +55,7 @@ fn main() {
     );
 
     // Set up the config for the Microsoft Graph OAuth2 process.
-    let client = BasicClient::new(
+    let client = Client::new(
         graph_client_id,
         Some(graph_client_secret),
         auth_url,
@@ -146,10 +145,16 @@ fn main() {
             );
 
             // Send the PKCE code verifier in the token request
-            let params: Vec<(&str, &str)> = vec![("code_verifier", &code_verifier.secret())];
+            let mut runtime =
+                tokio::runtime::current_thread::Runtime::new().expect("failed to setup runtime");
 
             // Exchange the code with a token.
-            let token = client.exchange_code_extension(code, &params);
+            let token = runtime.block_on(
+                client
+                    .exchange_code(code)
+                    .param("code_verifier", code_verifier.secret())
+                    .execute::<BasicTokenResponse>(),
+            );
 
             println!("MS Graph returned the following token:\n{:?}\n", token);
 
