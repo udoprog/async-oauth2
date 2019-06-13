@@ -222,7 +222,7 @@ use std::{
     time::Duration,
 };
 
-use failure::Fail;
+use failure::{Error, Fail};
 use futures::{Future, Stream};
 use rand::{thread_rng, Rng};
 use serde::de::DeserializeOwned;
@@ -600,9 +600,13 @@ impl Client {
         client_secret: Option<ClientSecret>,
         auth_url: AuthUrl,
         token_url: Option<TokenUrl>,
-    ) -> Self {
-        Client {
-            client: reqwest::r#async::Client::new(),
+    ) -> Result<Self, Error> {
+        let client = reqwest::r#async::Client::builder()
+            .redirect(reqwest::RedirectPolicy::none())
+            .build()?;
+
+        Ok(Client {
+            client,
             client_id,
             client_secret,
             auth_url,
@@ -610,7 +614,7 @@ impl Client {
             token_url,
             scopes: Vec::new(),
             redirect_url: None,
-        }
+        })
     }
 
     ///
