@@ -2,8 +2,6 @@ use mockito::{mock, server_url};
 use url::form_urlencoded::byte_serialize;
 use url::Url;
 
-use oauth2::basic::*;
-use oauth2::prelude::*;
 use oauth2::*;
 
 use serde::{Deserialize, Serialize};
@@ -17,6 +15,7 @@ fn new_client() -> Client {
             Url::parse("http://example.com/token").unwrap(),
         )),
     )
+    .unwrap()
 }
 
 fn new_mock_client() -> Client {
@@ -28,6 +27,7 @@ fn new_mock_client() -> Client {
             Url::parse(&(server_url().to_string() + "/token")).unwrap(),
         )),
     )
+    .unwrap()
 }
 
 fn new_mock_client_with_unsafe_chars() -> Client {
@@ -39,6 +39,7 @@ fn new_mock_client_with_unsafe_chars() -> Client {
             Url::parse(&(server_url().to_string() + "/token")).unwrap(),
         )),
     )
+    .unwrap()
 }
 
 #[test]
@@ -122,11 +123,11 @@ fn test_authorize_url_pkce() {
     let client = new_client();
     let verifier =
         PkceCodeVerifierS256::new("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk".to_string());
-    let (url, _) = client.authorize_url_extension(
-        &ResponseType::new("code".to_string()),
-        || CsrfToken::new("csrf_token".to_string()),
-        &verifier.authorize_url_params(),
-    );
+    let (mut url, _) = client.authorize_url(|| CsrfToken::new("csrf_token".to_string()));
+
+    url.query_pairs_mut()
+        .extend_pairs(verifier.authorize_url_params());
+
     assert_eq!(
         Url::parse(concat!(
             "http://example.com/auth",
@@ -174,7 +175,8 @@ fn test_authorize_url_with_param() {
         Some(TokenUrl::new(
             Url::parse("http://example.com/token").unwrap(),
         )),
-    );
+    )
+    .unwrap();
 
     let (url, _) = client.authorize_url(|| CsrfToken::new("csrf_token".to_string()));
 
@@ -209,15 +211,13 @@ fn test_authorize_url_with_scopes() {
 fn test_authorize_url_with_extension_response_type() {
     let client = new_client();
 
-    let (url, _) = client.authorize_url_extension(
-        &ResponseType::new("code token".to_string()),
-        || CsrfToken::new("csrf_token".to_string()),
-        &vec![("foo", "bar")],
-    );
+    let (mut url, _) = client.authorize_url(|| CsrfToken::new("csrf_token".to_string()));
+
+    url.query_pairs_mut().append_pair("foo", "bar");
 
     assert_eq!(
         Url::parse(
-            "http://example.com/auth?response_type=code+token&client_id=aaa&state=csrf_token\
+            "http://example.com/auth?response_type=code&client_id=aaa&state=csrf_token\
              &foo=bar"
         )
         .unwrap(),
@@ -261,7 +261,8 @@ fn test_exchange_code_successful_with_minimal_json_response() {
         Some(TokenUrl::new(
             Url::parse(&(server_url().to_string() + "/token")).unwrap(),
         )),
-    );
+    )
+    .unwrap();
     let token = client
         .exchange_code(AuthorizationCode::new("ccc".to_string()))
         .unwrap();
@@ -269,7 +270,7 @@ fn test_exchange_code_successful_with_minimal_json_response() {
     mock.assert();
 
     assert_eq!("12/34", token.access_token().secret());
-    assert_eq!(BasicTokenType::Bearer, *token.token_type());
+    assert_eq!(TokenType::Bearer, *token.token_type());
     assert_eq!(None, token.expires_in());
     assert_eq!(None, token.refresh_token());
 
@@ -280,7 +281,7 @@ fn test_exchange_code_successful_with_minimal_json_response() {
         serialized_json
     );
 
-    let deserialized_token = serde_json::from_str::<BasicTokenResponse>(&serialized_json).unwrap();
+    let deserialized_token = serde_json::from_str::<TokenResponse>(&serialized_json).unwrap();
     assert_eq!(token, deserialized_token);
 }
 
@@ -304,7 +305,7 @@ fn test_exchange_code_successful_with_complete_json_response() {
     mock.assert();
 
     assert_eq!("12/34", token.access_token().secret());
-    assert_eq!(BasicTokenType::Bearer, *token.token_type());
+    assert_eq!(TokenType::Bearer, *token.token_type());
     assert_eq!(
         Some(&vec![
             Scope::new("read".to_string()),
@@ -324,7 +325,7 @@ fn test_exchange_code_successful_with_complete_json_response() {
         serialized_json
     );
 
-    let deserialized_token = serde_json::from_str::<BasicTokenResponse>(&serialized_json).unwrap();
+    let deserialized_token = serde_json::from_str::<TokenResponse>(&serialized_json).unwrap();
     assert_eq!(token, deserialized_token);
 }
 
@@ -348,7 +349,7 @@ fn test_exchange_client_credentials_with_basic_auth() {
     mock.assert();
 
     assert_eq!("12/34", token.access_token().secret());
-    assert_eq!(BasicTokenType::Bearer, *token.token_type());
+    assert_eq!(TokenType::Bearer, *token.token_type());
     assert_eq!(
         Some(&vec![
             Scope::new("read".to_string()),
@@ -383,7 +384,7 @@ fn test_exchange_client_credentials_with_body_auth_and_scope() {
     mock.assert();
 
     assert_eq!("12/34", token.access_token().secret());
-    assert_eq!(BasicTokenType::Bearer, *token.token_type());
+    assert_eq!(TokenType::Bearer, *token.token_type());
     assert_eq!(
         Some(&vec![
             Scope::new("read".to_string()),
@@ -414,7 +415,7 @@ fn test_exchange_refresh_token_with_basic_auth() {
     mock.assert();
 
     assert_eq!("12/34", token.access_token().secret());
-    assert_eq!(BasicTokenType::Bearer, *token.token_type());
+    assert_eq!(TokenType::Bearer, *token.token_type());
     assert_eq!(
         Some(&vec![
             Scope::new("read".to_string()),
@@ -447,7 +448,7 @@ fn test_exchange_refresh_token_with_json_response() {
     mock.assert();
 
     assert_eq!("12/34", token.access_token().secret());
-    assert_eq!(BasicTokenType::Bearer, *token.token_type());
+    assert_eq!(TokenType::Bearer, *token.token_type());
     assert_eq!(
         Some(&vec![
             Scope::new("read".to_string()),
@@ -484,7 +485,7 @@ fn test_exchange_password_with_json_response() {
     mock.assert();
 
     assert_eq!("12/34", token.access_token().secret());
-    assert_eq!(BasicTokenType::Bearer, *token.token_type());
+    assert_eq!(TokenType::Bearer, *token.token_type());
     assert_eq!(
         Some(&vec![
             Scope::new("read".to_string()),
@@ -522,7 +523,7 @@ fn test_exchange_code_successful_with_redirect_url() {
     mock.assert();
 
     assert_eq!("12/34", token.access_token().secret());
-    assert_eq!(BasicTokenType::Bearer, *token.token_type());
+    assert_eq!(TokenType::Bearer, *token.token_type());
     assert_eq!(
         Some(&vec![
             Scope::new("read".to_string()),
@@ -560,7 +561,7 @@ fn test_exchange_code_successful_with_basic_auth() {
     mock.assert();
 
     assert_eq!("12/34", token.access_token().secret());
-    assert_eq!(BasicTokenType::Bearer, *token.token_type());
+    assert_eq!(TokenType::Bearer, *token.token_type());
     assert_eq!(
         Some(&vec![
             Scope::new("read".to_string()),
@@ -605,7 +606,7 @@ fn test_exchange_code_successful_with_extension() {
     mock.assert();
 
     assert_eq!("12/34", token.access_token().secret());
-    assert_eq!(BasicTokenType::Bearer, *token.token_type());
+    assert_eq!(TokenType::Bearer, *token.token_type());
     assert_eq!(
         Some(&vec![
             Scope::new("read".to_string()),
@@ -650,7 +651,7 @@ fn test_exchange_refresh_token_successful_with_extension() {
     mock.assert();
 
     assert_eq!("12/34", token.access_token().secret());
-    assert_eq!(BasicTokenType::Bearer, *token.token_type());
+    assert_eq!(TokenType::Bearer, *token.token_type());
     assert_eq!(
         Some(&vec![
             Scope::new("read".to_string()),
@@ -683,10 +684,7 @@ fn test_exchange_code_with_simple_json_error() {
     let token_err = token.err().unwrap();
     match &token_err {
         &RequestTokenError::ServerResponse(ref error_response) => {
-            assert_eq!(
-                BasicErrorResponseType::InvalidRequest,
-                *error_response.error()
-            );
+            assert_eq!(ErrorField::InvalidRequest, error_response.error);
             assert_eq!(
                 Some(&"stuff happened".to_string()),
                 error_response.error_description()
@@ -705,10 +703,10 @@ fn test_exchange_code_with_simple_json_error() {
                 format!("{}", error_response)
             );
 
-            // Test Debug trait for BasicErrorResponseType
-            assert_eq!("invalid_request", format!("{:?}", error_response.error()));
-            // Test Display trait for BasicErrorResponseType
-            assert_eq!("invalid_request", format!("{}", error_response.error()));
+            // Test Debug trait for ErrorField
+            assert_eq!("invalid_request", format!("{:?}", error_response.error));
+            // Test Display trait for ErrorField
+            assert_eq!("invalid_request", format!("{}", error_response.error));
 
             // Ensure that serialization produces an equivalent JSON value.
             let serialized_json = serde_json::to_string(&error_response).unwrap();
@@ -719,7 +717,7 @@ fn test_exchange_code_with_simple_json_error() {
             );
 
             let deserialized_error =
-                serde_json::from_str::<BasicErrorResponse>(&serialized_json).unwrap();
+                serde_json::from_str::<ErrorResponse>(&serialized_json).unwrap();
             assert_eq!(error_response, &deserialized_error);
         }
         other => panic!("Unexpected error: {:?}", other),
@@ -849,10 +847,7 @@ fn test_exchange_code_with_400_status_code() {
 
     match token.err().unwrap() {
         RequestTokenError::ServerResponse(error_response) => {
-            assert_eq!(
-                BasicErrorResponseType::InvalidRequest,
-                *error_response.error()
-            );
+            assert_eq!(ErrorField::InvalidRequest, error_response.error);
             assert_eq!(
                 Some(&"Expired code.".to_string()),
                 error_response.error_description()
@@ -870,7 +865,9 @@ fn test_exchange_code_fails_gracefully_on_transport_error() {
         Some(ClientSecret::new("bbb".to_string())),
         AuthUrl::new(Url::parse("http://auth").unwrap()),
         Some(TokenUrl::new(Url::parse("http://token").unwrap())),
-    );
+    )
+    .unwrap();
+
     let token = client.exchange_code(AuthorizationCode::new("ccc".to_string()));
 
     assert!(token.is_err());
@@ -883,101 +880,26 @@ fn test_exchange_code_fails_gracefully_on_transport_error() {
     }
 }
 
-mod colorful_extension {
-    use oauth2::*;
-    use serde::{Deserialize, Serialize};
-    use std::fmt::Error as FormatterError;
-    use std::fmt::{Debug, Display, Formatter};
-
-    pub type ColorfulClient = Client<
-        ColorfulErrorResponseType,
-        StandardTokenResponse<ColorfulFields, ColorfulTokenType>,
-        ColorfulTokenType,
-    >;
-
-    #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-    #[serde(rename_all = "lowercase")]
-    pub enum ColorfulTokenType {
-        Green,
-        Red,
-    }
-    impl TokenType for ColorfulTokenType {}
-
-    #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-    pub struct ColorfulFields {
-        #[serde(rename = "shape")]
-        #[serde(skip_serializing_if = "Option::is_none")]
-        shape: Option<String>,
-        #[serde(rename = "height")]
-        height: u32,
-    }
-    impl ColorfulFields {
-        pub fn shape(&self) -> Option<&String> {
-            self.shape.as_ref()
-        }
-        pub fn height(&self) -> u32 {
-            self.height
-        }
-    }
-    impl ExtraTokenFields for ColorfulFields {}
-
-    #[derive(Clone, Deserialize, PartialEq, Serialize)]
-    #[serde(rename_all = "snake_case")]
-    pub enum ColorfulErrorResponseType {
-        TooDark,
-        TooLight,
-        WrongColorSpace,
-    }
-
-    impl ColorfulErrorResponseType {
-        fn to_str(&self) -> &str {
-            match self {
-                &ColorfulErrorResponseType::TooDark => "too_dark",
-                &ColorfulErrorResponseType::TooLight => "too_light",
-                &ColorfulErrorResponseType::WrongColorSpace => "wrong_color_space",
-            }
-        }
-    }
-
-    impl ErrorResponseType for ColorfulErrorResponseType {}
-
-    impl Debug for ColorfulErrorResponseType {
-        fn fmt(&self, f: &mut Formatter) -> Result<(), FormatterError> {
-            Display::fmt(self, f)
-        }
-    }
-
-    impl Display for ColorfulErrorResponseType {
-        fn fmt(&self, f: &mut Formatter) -> Result<(), FormatterError> {
-            let message: &str = self.to_str();
-
-            write!(f, "{}", message)
-        }
-    }
-
-    pub type ColorfulTokenResponse = StandardTokenResponse<ColorfulFields, ColorfulTokenType>;
-}
-
 #[test]
 fn test_extension_successful_with_minimal_json_response() {
-    use colorful_extension::*;
-
     let mock = mock("POST", "/token")
         .match_header("Accept", "application/json")
         .match_header("Authorization", "Basic YWFhOmJiYg==") // base64("aaa:bbb")
         .match_body("grant_type=authorization_code&code=ccc")
         .with_header("content-type", "application/json")
-        .with_body("{\"access_token\": \"12/34\", \"token_type\": \"green\", \"height\": 10}")
+        .with_body("{\"access_token\": \"12/34\", \"token_type\": \"bearer\", \"height\": 10}")
         .create();
 
-    let client = ColorfulClient::new(
+    let client = Client::new(
         ClientId::new("aaa".to_string()),
         Some(ClientSecret::new("bbb".to_string())),
         AuthUrl::new(Url::parse("http://example.com/auth").unwrap()),
         Some(TokenUrl::new(
             Url::parse(&(server_url().to_string() + "/token")).unwrap(),
         )),
-    );
+    )
+    .unwrap();
+
     let token = client
         .exchange_code(AuthorizationCode::new("ccc".to_string()))
         .unwrap();
@@ -985,7 +907,7 @@ fn test_extension_successful_with_minimal_json_response() {
     mock.assert();
 
     assert_eq!("12/34", token.access_token().secret());
-    assert_eq!(ColorfulTokenType::Green, *token.token_type());
+    assert_eq!(TokenType::Bearer, *token.token_type());
     assert_eq!(None, token.expires_in());
     assert_eq!(None, token.refresh_token());
     assert_eq!(None, token.extra_fields().shape());
@@ -994,19 +916,16 @@ fn test_extension_successful_with_minimal_json_response() {
     // Ensure that serialization produces an equivalent JSON value.
     let serialized_json = serde_json::to_string(&token).unwrap();
     assert_eq!(
-        "{\"access_token\":\"12/34\",\"token_type\":\"green\",\"height\":10}".to_string(),
+        "{\"access_token\":\"12/34\",\"token_type\":\"bearer\",\"height\":10}".to_string(),
         serialized_json
     );
 
-    let deserialized_token =
-        serde_json::from_str::<ColorfulTokenResponse>(&serialized_json).unwrap();
+    let deserialized_token = serde_json::from_str::<TokenResponse>(&serialized_json).unwrap();
     assert_eq!(token, deserialized_token);
 }
 
 #[test]
 fn test_extension_successful_with_complete_json_response() {
-    use colorful_extension::*;
-
     let mock = mock("POST", "/token")
         .match_header("Accept", "application/json")
         .match_body("grant_type=authorization_code&code=ccc&client_id=aaa&client_secret=bbb")
@@ -1063,8 +982,6 @@ fn test_extension_successful_with_complete_json_response() {
 
 #[test]
 fn test_extension_with_simple_json_error() {
-    use colorful_extension::*;
-
     let mock = mock("POST", "/token")
         .match_header("Accept", "application/json")
         .match_header("Authorization", "Basic YWFhOmJiYg==") // base64("aaa:bbb")
@@ -1077,14 +994,15 @@ fn test_extension_with_simple_json_error() {
         )
         .create();
 
-    let client = ColorfulClient::new(
+    let client = Client::new(
         ClientId::new("aaa".to_string()),
         Some(ClientSecret::new("bbb".to_string())),
         AuthUrl::new(Url::parse("http://example.com/auth").unwrap()),
         Some(TokenUrl::new(
             Url::parse(&(server_url().to_string() + "/token")).unwrap(),
         )),
-    );
+    )
+    .unwrap();
     let token = client.exchange_code(AuthorizationCode::new("ccc".to_string()));
 
     mock.assert();
@@ -1094,14 +1012,20 @@ fn test_extension_with_simple_json_error() {
     let token_err = token.err().unwrap();
     match &token_err {
         &RequestTokenError::ServerResponse(ref error_response) => {
-            assert_eq!(ColorfulErrorResponseType::TooLight, *error_response.error());
             assert_eq!(
-                Some(&"stuff happened".to_string()),
-                error_response.error_description()
+                ErrorField::Other(String::from("too_light")),
+                error_response.error
             );
             assert_eq!(
-                Some(&"https://errors".to_string()),
-                error_response.error_uri()
+                Some("stuff happened"),
+                error_response
+                    .error_description
+                    .as_ref()
+                    .map(String::as_str)
+            );
+            assert_eq!(
+                Some("https://errors"),
+                error_response.error_uri.as_ref().map(String::as_str)
             );
 
             // Ensure that serialization produces an equivalent JSON value.
@@ -1113,10 +1037,8 @@ fn test_extension_with_simple_json_error() {
                 serialized_json
             );
 
-            let deserialized_error = serde_json::from_str::<
-                oauth2::ErrorResponse<ColorfulErrorResponseType>,
-            >(&serialized_json)
-            .unwrap();
+            let deserialized_error =
+                serde_json::from_str::<oauth2::ErrorResponse>(&serialized_json).unwrap();
             assert_eq!(error_response, &deserialized_error);
         }
         other => panic!("Unexpected error: {:?}", other),

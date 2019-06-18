@@ -213,14 +213,7 @@
 //! - [Github](https://github.com/ramosbugs/oauth2-rs/blob/master/examples/github.rs)
 //!
 
-use std::{
-    borrow::Cow,
-    convert::Into,
-    fmt::Error as FormatterError,
-    fmt::{Debug, Display, Formatter},
-    ops::Deref,
-    time::Duration,
-};
+use std::{borrow::Cow, convert::Into, fmt, ops::Deref, time::Duration};
 
 use failure::{Error, Fail};
 use futures::{Future, Stream};
@@ -343,8 +336,8 @@ macro_rules! new_secret_type {
             pub fn secret(&self) -> &$type { &self.0 }
         }
 
-        impl Debug for $name {
-            fn fmt(&self, f: &mut Formatter) -> Result<(), FormatterError> {
+        impl fmt::Debug for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 write!(f, concat!(stringify!($name), "([redacted])"))
             }
         }
@@ -673,10 +666,7 @@ impl Client {
         F: FnOnce() -> CsrfToken,
     {
         let state = state_fn();
-        (
-            self.authorize_url_impl::<&str>("code", Some(&state), None),
-            state,
-        )
+        (self.authorize_url_impl("code", Some(&state)), state)
     }
 
     ///
@@ -703,65 +693,10 @@ impl Client {
         F: FnOnce() -> CsrfToken,
     {
         let state = state_fn();
-        (
-            self.authorize_url_impl::<&str>("token", Some(&state), None),
-            state,
-        )
+        (self.authorize_url_impl("token", Some(&state)), state)
     }
 
-    ///
-    /// Produces the full authorization URL used by an OAuth2
-    /// [extension](https://tools.ietf.org/html/rfc6749#section-8.4).
-    ///
-    /// # Arguments
-    ///
-    /// * `response_type` - The response type this client expects from the authorization endpoint.
-    ///   For `"code"` or `"token"` response types, instead use the `authorize_url` or
-    ///   `authorize_url_implicit` functions, respectively.
-    /// * `state_fn` - A function that returns an opaque value used by the client to maintain state
-    ///   between the request and callback. The authorization server includes this value when
-    ///   redirecting the user-agent back to the client.
-    /// * `extra_params` - Additional parameters as required by the applicable OAuth2 extension(s).
-    ///   Callers should NOT specify any of the following parameters: `response_type`, `client_id`,
-    ///   `redirect_uri`, or `scope`.
-    ///
-    /// # Security Warning
-    ///
-    /// Callers should use a fresh, unpredictable `state` for each authorization request and verify
-    /// that this value matches the `state` parameter passed by the authorization server to the
-    /// redirect URI. Doing so mitigates
-    /// [Cross-Site Request Forgery](https://tools.ietf.org/html/rfc6749#section-10.12)
-    ///  attacks.
-    ///
-    /// Callers should follow the security recommendations for any OAuth2 extensions used with
-    /// this function, which are beyond the scope of
-    /// [RFC 6749](https://tools.ietf.org/html/rfc6749).
-    pub fn authorize_url_extension<F, T>(
-        &self,
-        response_type: &ResponseType,
-        state_fn: F,
-        extra_params: &[(&str, T)],
-    ) -> (Url, CsrfToken)
-    where
-        F: FnOnce() -> CsrfToken,
-        T: AsRef<str> + Clone,
-    {
-        let state = state_fn();
-        (
-            self.authorize_url_impl(response_type, Some(&state), Some(extra_params)),
-            state,
-        )
-    }
-
-    fn authorize_url_impl<T>(
-        &self,
-        response_type: &str,
-        state_opt: Option<&CsrfToken>,
-        extra_params_opt: Option<&[(&str, T)]>,
-    ) -> Url
-    where
-        T: AsRef<str> + Clone,
-    {
+    fn authorize_url_impl(&self, response_type: &str, state_opt: Option<&CsrfToken>) -> Url {
         let scopes = self
             .scopes
             .iter()
@@ -769,31 +704,25 @@ impl Client {
             .collect::<Vec<_>>()
             .join(" ");
 
-        let mut pairs: Vec<(&str, &str)> = vec![
-            ("response_type", response_type),
-            ("client_id", &self.client_id),
-        ];
-
-        if let Some(ref redirect_url) = self.redirect_url {
-            pairs.push(("redirect_uri", redirect_url.as_str()));
-        }
-
-        if !scopes.is_empty() {
-            pairs.push(("scope", &scopes));
-        }
-
-        if let Some(state) = state_opt {
-            pairs.push(("state", state.secret()));
-        }
-
         let mut url: Url = (*self.auth_url).clone();
 
-        url.query_pairs_mut()
-            .extend_pairs(pairs.iter().map(|&(k, v)| (k, &v[..])));
+        {
+            let mut query = url.query_pairs_mut();
 
-        if let Some(extra_params) = extra_params_opt {
-            url.query_pairs_mut()
-                .extend_pairs(extra_params.iter().cloned());
+            query.append_pair("response_type", response_type);
+            query.append_pair("client_id", &self.client_id);
+
+            if let Some(ref redirect_url) = self.redirect_url {
+                query.append_pair("redirect_uri", redirect_url.as_str());
+            }
+
+            if !scopes.is_empty() {
+                query.append_pair("scope", &scopes);
+            }
+
+            if let Some(state) = state_opt {
+                query.append_pair("state", state.secret());
+            }
         }
 
         url
@@ -917,7 +846,7 @@ impl<'a> RequestBuilder<'a> {
     }
 
     /// Execute the token request.
-    pub fn execute<T>(self) -> impl Future<Item = T, Error = RequestTokenError<T::ErrorField>>
+    pub fn execute<T>(self) -> impl Future<Item = T, Error = RequestTokenError>
     where
         T: TokenResponse,
     {
@@ -935,7 +864,7 @@ impl<'a> RequestBuilder<'a> {
                 // dynamically. In those cases, it would be preferable to return an `Err` rather
                 // than panic. An example situation where this might arise is OpenID Connect
                 // discovery.
-                RequestTokenError::<T::ErrorField>::Other("token_url must not be `None`".to_string()))
+                RequestTokenError::Other("token_url must not be `None`".into()))
             .unwrap();
 
         let mut request = self
@@ -1006,12 +935,10 @@ impl<'a> RequestBuilder<'a> {
                 if !status.is_success() {
                     if body.is_empty() {
                         return Err(RequestTokenError::Other(
-                            "Server returned empty error response".to_string(),
+                            "Server returned empty error response".into(),
                         ));
                     } else {
-                        let error = match serde_json::from_slice::<ErrorResponse<T::ErrorField>>(
-                            body.as_ref(),
-                        ) {
+                        let error = match serde_json::from_slice::<ErrorResponse>(body.as_ref()) {
                             Ok(error) => RequestTokenError::ServerResponse(error),
                             Err(error) => RequestTokenError::Parse(error, body.as_ref().to_vec()),
                         };
@@ -1021,7 +948,7 @@ impl<'a> RequestBuilder<'a> {
 
                 if body.is_empty() {
                     Err(RequestTokenError::Other(
-                        "Server returned empty response body".to_string(),
+                        "Server returned empty response body".into(),
                     ))
                 } else {
                     serde_json::from_slice(body.as_ref())
@@ -1035,83 +962,62 @@ fn url_encode(s: &str) -> String {
     url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>()
 }
 
-///
-/// Trait for OAuth2 access tokens.
-///
-pub trait TokenType: Clone + DeserializeOwned + Debug + PartialEq + Serialize {}
-
-///
-/// Trait for adding extra fields to the `TokenResponse`.
-///
-pub trait ExtraTokenFields: Clone + DeserializeOwned + Debug + PartialEq + Serialize {}
-
-///
-/// Empty (default) extra token fields.
-///
+/// Basic OAuth2 authorization token types.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct EmptyExtraTokenFields {}
-impl ExtraTokenFields for EmptyExtraTokenFields {}
+#[serde(rename_all = "lowercase")]
+pub enum TokenType {
+    /// Bearer token
+    /// ([OAuth 2.0 Bearer Tokens - RFC 6750](https://tools.ietf.org/html/rfc6750)).
+    Bearer,
+    /// MAC ([OAuth 2.0 Message Authentication Code (MAC)
+    /// Tokens](https://tools.ietf.org/html/draft-ietf-oauth-v2-http-mac-05)).
+    Mac,
+}
 
-///
 /// Common methods shared by all OAuth2 token implementations.
 ///
 /// The methods in this trait are defined in
 /// [Section 5.1 of RFC 6749](https://tools.ietf.org/html/rfc6749#section-5.1). This trait exists
 /// separately from the `StandardTokenResponse` struct to support customization by clients,
 /// such as supporting interoperability with non-standards-complaint OAuth2 providers.
-///
-pub trait TokenResponse: Clone + Debug + DeserializeOwned + PartialEq + Serialize {
-    /// The type of the token.
-    type TokenType: TokenType;
-    /// The type of the error field in the response.
-    type ErrorField: ErrorField;
-
-    ///
+pub trait TokenResponse: Clone + fmt::Debug + DeserializeOwned + PartialEq + Serialize {
     /// REQUIRED. The access token issued by the authorization server.
-    ///
     fn access_token(&self) -> &AccessToken;
-    ///
+
     /// REQUIRED. The type of the token issued as described in
     /// [Section 7.1](https://tools.ietf.org/html/rfc6749#section-7.1).
     /// Value is case insensitive and deserialized to the generic `TokenType` parameter.
-    ///
-    fn token_type(&self) -> &Self::TokenType;
-    ///
+    fn token_type(&self) -> &TokenType;
+
     /// RECOMMENDED. The lifetime in seconds of the access token. For example, the value 3600
     /// denotes that the access token will expire in one hour from the time the response was
     /// generated. If omitted, the authorization server SHOULD provide the expiration time via
     /// other means or document the default value.
-    ///
     fn expires_in(&self) -> Option<Duration>;
-    ///
+
     /// OPTIONAL. The refresh token, which can be used to obtain new access tokens using the same
     /// authorization grant as described in
     /// [Section 6](https://tools.ietf.org/html/rfc6749#section-6).
-    ///
     fn refresh_token(&self) -> Option<&RefreshToken>;
-    ///
+
     /// OPTIONAL, if identical to the scope requested by the client; otherwise, REQUIRED. The
     /// scipe of the access token as described by
     /// [Section 3.3](https://tools.ietf.org/html/rfc6749#section-3.3). If included in the response,
     /// this space-delimited field is parsed into a `Vec` of individual scopes. If omitted from
     /// the response, this field is `None`.
-    ///
     fn scopes(&self) -> Option<&Vec<Scope>>;
 }
 
-///
 /// Standard OAuth2 token response.
 ///
 /// This struct includes the fields defined in
 /// [Section 5.1 of RFC 6749](https://tools.ietf.org/html/rfc6749#section-5.1), as well as
 /// extensions defined by the `EF` type parameter.
-///
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct StandardTokenResponse<EF: ExtraTokenFields, TT: TokenType> {
+pub struct StandardTokenResponse {
     access_token: AccessToken,
-    #[serde(bound = "TT: TokenType")]
     #[serde(deserialize_with = "helpers::deserialize_untagged_enum_case_insensitive")]
-    token_type: TT,
+    token_type: TokenType,
     #[serde(skip_serializing_if = "Option::is_none")]
     expires_in: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1122,142 +1028,119 @@ pub struct StandardTokenResponse<EF: ExtraTokenFields, TT: TokenType> {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     scopes: Option<Vec<Scope>>,
-
-    #[serde(bound = "EF: ExtraTokenFields")]
-    #[serde(flatten)]
-    extra_fields: EF,
 }
 
-impl<EF, TT> StandardTokenResponse<EF, TT>
-where
-    EF: ExtraTokenFields,
-    TT: TokenType,
-{
-    ///
-    /// Extra fields defined by client application.
-    ///
-    pub fn extra_fields(&self) -> &EF {
-        &self.extra_fields
-    }
-}
-
-impl<EF, TT> TokenResponse for StandardTokenResponse<EF, TT>
-where
-    EF: ExtraTokenFields,
-    TT: TokenType,
-{
-    type TokenType = TT;
-    type ErrorField = basic::BasicErrorField;
-
-    ///
+impl TokenResponse for StandardTokenResponse {
     /// REQUIRED. The access token issued by the authorization server.
-    ///
     fn access_token(&self) -> &AccessToken {
         &self.access_token
     }
-    ///
+
     /// REQUIRED. The type of the token issued as described in
     /// [Section 7.1](https://tools.ietf.org/html/rfc6749#section-7.1).
     /// Value is case insensitive and deserialized to the generic `TokenType` parameter.
-    ///
-    fn token_type(&self) -> &TT {
+    fn token_type(&self) -> &TokenType {
         &self.token_type
     }
-    ///
+
     /// RECOMMENDED. The lifetime in seconds of the access token. For example, the value 3600
     /// denotes that the access token will expire in one hour from the time the response was
     /// generated. If omitted, the authorization server SHOULD provide the expiration time via
     /// other means or document the default value.
-    ///
     fn expires_in(&self) -> Option<Duration> {
         self.expires_in.map(Duration::from_secs)
     }
-    ///
+
     /// OPTIONAL. The refresh token, which can be used to obtain new access tokens using the same
     /// authorization grant as described in
     /// [Section 6](https://tools.ietf.org/html/rfc6749#section-6).
-    ///
     fn refresh_token(&self) -> Option<&RefreshToken> {
         self.refresh_token.as_ref()
     }
-    ///
+
     /// OPTIONAL, if identical to the scope requested by the client; otherwise, REQUIRED. The
     /// scipe of the access token as described by
     /// [Section 3.3](https://tools.ietf.org/html/rfc6749#section-3.3). If included in the response,
     /// this space-delimited field is parsed into a `Vec` of individual scopes. If omitted from
     /// the response, this field is `None`.
-    ///
     fn scopes(&self) -> Option<&Vec<Scope>> {
         self.scopes.as_ref()
     }
 }
 
-///
-/// Error types enum.
-///
-/// NOTE: The implementation of the `Display` trait must return the `snake_case` representation of
-/// this error type. This value must match the error type from the relevant OAuth 2.0 standards
-/// (RFC 6749 or an extension).
-///
-pub trait ErrorField:
-    'static + Clone + Debug + DeserializeOwned + Display + PartialEq + Send + Serialize + Sync
-{
+/// These error types are defined in
+/// [Section 5.2 of RFC 6749](https://tools.ietf.org/html/rfc6749#section-5.2).
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorField {
+    /// The request is missing a required parameter, includes an unsupported parameter value
+    /// (other than grant type), repeats a parameter, includes multiple credentials, utilizes
+    /// more than one mechanism for authenticating the client, or is otherwise malformed.
+    InvalidRequest,
+    /// Client authentication failed (e.g., unknown client, no client authentication included,
+    /// or unsupported authentication method).
+    InvalidClient,
+    /// The provided authorization grant (e.g., authorization code, resource owner credentials)
+    /// or refresh token is invalid, expired, revoked, does not match the redirection URI used
+    /// in the authorization request, or was issued to another client.
+    InvalidGrant,
+    /// The authenticated client is not authorized to use this authorization grant type.
+    UnauthorizedClient,
+    /// The authorization grant type is not supported by the authorization server.
+    UnsupportedGrantType,
+    /// The requested scope is invalid, unknown, malformed, or exceeds the scope granted by the
+    /// resource owner.
+    InvalidScope,
+    /// Other error type.
+    Other(String),
 }
 
-///
+impl fmt::Display for ErrorField {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use self::ErrorField::*;
+
+        match *self {
+            InvalidRequest => "invalid_request".fmt(fmt),
+            InvalidClient => "invalid_client".fmt(fmt),
+            InvalidGrant => "invalid_grant".fmt(fmt),
+            UnauthorizedClient => "unauthorized_client".fmt(fmt),
+            UnsupportedGrantType => "unsupported_grant_type".fmt(fmt),
+            InvalidScope => "invalid_scope".fmt(fmt),
+            Other(ref value) => value.fmt(fmt),
+        }
+    }
+}
+
 /// Error response returned by server after requesting an access token.
 ///
 /// The fields in this structure are defined in
-/// [Section 5.2 of RFC 6749](https://tools.ietf.org/html/rfc6749#section-5.2). This
-/// trait is parameterized by a `ErrorField` to support error types specific to future OAuth2
-/// authentication schemes and extensions.
-///
+/// [Section 5.2 of RFC 6749](https://tools.ietf.org/html/rfc6749#section-5.2).
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct ErrorResponse<T: ErrorField> {
-    #[serde(bound = "T: ErrorField")]
-    error: T,
+pub struct ErrorResponse {
+    /// A single ASCII error code.
+    pub error: ErrorField,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
-    error_description: Option<String>,
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error_uri: Option<String>,
-}
-
-impl<T: ErrorField> ErrorResponse<T> {
-    ///
-    /// REQUIRED. A single ASCII error code deserialized to the generic parameter
-    /// `ErrorField`.
-    ///
-    pub fn error(&self) -> &T {
-        &self.error
-    }
-    ///
-    /// OPTIONAL. Human-readable ASCII text providing additional information, used to assist
+    /// Human-readable ASCII text providing additional information, used to assist
     /// the client developer in understanding the error that occurred.
-    ///
-    pub fn error_description(&self) -> Option<&String> {
-        self.error_description.as_ref()
-    }
-    ///
-    /// OPTIONAL. A URI identifying a human-readable web page with information about the error,
+    pub error_description: Option<String>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    /// A URI identifying a human-readable web page with information about the error,
     /// used to provide the client developer with additional information about the error.
-    ///
-    pub fn error_uri(&self) -> Option<&String> {
-        self.error_uri.as_ref()
-    }
+    pub error_uri: Option<String>,
 }
 
-impl<TE: ErrorField> Display for ErrorResponse<TE> {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), FormatterError> {
-        let mut formatted = self.error().to_string();
+impl fmt::Display for ErrorResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut formatted = self.error.to_string();
 
-        if let Some(error_description) = self.error_description() {
+        if let Some(error_description) = self.error_description.as_ref() {
             formatted.push_str(": ");
             formatted.push_str(error_description);
         }
 
-        if let Some(error_uri) = self.error_uri() {
+        if let Some(error_uri) = self.error_uri.as_ref() {
             formatted.push_str(" / See ");
             formatted.push_str(error_uri);
         }
@@ -1270,13 +1153,13 @@ impl<TE: ErrorField> Display for ErrorResponse<TE> {
 /// Error encountered while requesting access token.
 ///
 #[derive(Debug, Fail)]
-pub enum RequestTokenError<T: ErrorField> {
+pub enum RequestTokenError {
     ///
     /// Error response returned by authorization server. Contains the parsed `ErrorResponse`
     /// returned by the server.
     ///
     #[fail(display = "Server returned error response `{}`", _0)]
-    ServerResponse(ErrorResponse<T>),
+    ServerResponse(ErrorResponse),
     /// A client error that occured.
     #[fail(display = "Client error: {}", _0)]
     Client(reqwest::Error),
@@ -1290,117 +1173,10 @@ pub enum RequestTokenError<T: ErrorField> {
     /// Some other type of error occurred (e.g., an unexpected server response).
     ///
     #[fail(display = "Other error: {}", _0)]
-    Other(String),
+    Other(Cow<'static, str>),
 }
 
-///
-/// Basic OAuth2 implementation with no extensions
-/// ([RFC 6749](https://tools.ietf.org/html/rfc6749)).
-///
-pub mod basic {
-    use serde::{Deserialize, Serialize};
-    use std::fmt::Error as FormatterError;
-    use std::fmt::{Debug, Display, Formatter};
-
-    use super::helpers;
-    use super::{
-        EmptyExtraTokenFields, ErrorField, ErrorResponse, RequestTokenError, StandardTokenResponse,
-        TokenType,
-    };
-
-    ///
-    /// Basic OAuth2 authorization token types.
-    ///
-    #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-    #[serde(rename_all = "lowercase")]
-    pub enum BasicTokenType {
-        ///
-        /// Bearer token
-        /// ([OAuth 2.0 Bearer Tokens - RFC 6750](https://tools.ietf.org/html/rfc6750)).
-        ///
-        Bearer,
-        ///
-        /// MAC ([OAuth 2.0 Message Authentication Code (MAC)
-        /// Tokens](https://tools.ietf.org/html/draft-ietf-oauth-v2-http-mac-05)).
-        ///
-        Mac,
-    }
-    impl TokenType for BasicTokenType {}
-
-    ///
-    /// Basic OAuth2 token response.
-    ///
-    pub type BasicTokenResponse = StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>;
-
-    ///
-    /// Basic access token error types.
-    ///
-    /// These error types are defined in
-    /// [Section 5.2 of RFC 6749](https://tools.ietf.org/html/rfc6749#section-5.2).
-    ///
-    #[derive(Clone, Deserialize, PartialEq, Serialize)]
-    #[serde(rename_all = "snake_case")]
-    pub enum BasicErrorField {
-        ///
-        /// The request is missing a required parameter, includes an unsupported parameter value
-        /// (other than grant type), repeats a parameter, includes multiple credentials, utilizes
-        /// more than one mechanism for authenticating the client, or is otherwise malformed.
-        ///
-        InvalidRequest,
-        ///
-        /// Client authentication failed (e.g., unknown client, no client authentication included,
-        /// or unsupported authentication method).
-        ///
-        InvalidClient,
-        ///
-        /// The provided authorization grant (e.g., authorization code, resource owner credentials)
-        /// or refresh token is invalid, expired, revoked, does not match the redirection URI used
-        /// in the authorization request, or was issued to another client.
-        ///
-        InvalidGrant,
-        ///
-        /// The authenticated client is not authorized to use this authorization grant type.
-        ///
-        UnauthorizedClient,
-        ///
-        /// The authorization grant type is not supported by the authorization server.
-        ///
-        UnsupportedGrantType,
-        ///
-        /// The requested scope is invalid, unknown, malformed, or exceeds the scope granted by the
-        /// resource owner.
-        ///
-        InvalidScope,
-    }
-
-    impl ErrorField for BasicErrorField {}
-
-    impl Debug for BasicErrorField {
-        fn fmt(&self, f: &mut Formatter) -> Result<(), FormatterError> {
-            Display::fmt(self, f)
-        }
-    }
-
-    impl Display for BasicErrorField {
-        fn fmt(&self, f: &mut Formatter) -> Result<(), FormatterError> {
-            write!(f, "{}", helpers::variant_name(&self))
-        }
-    }
-
-    ///
-    /// Error response specialization for basic OAuth2 implementation.
-    ///
-    pub type BasicErrorResponse = ErrorResponse<BasicErrorField>;
-
-    ///
-    /// Token error specialization for basic OAuth2 implementation.
-    ///
-    pub type BasicRequestTokenError = RequestTokenError<BasicErrorField>;
-}
-
-///
 /// Insecure methods -- not recommended for most applications.
-///
 pub mod insecure {
     use url::Url;
 
@@ -1418,7 +1194,7 @@ pub mod insecure {
     /// It is highly recommended to use the `Client::authorize_url` function instead.
     ///
     pub fn authorize_url(client: &Client) -> Url {
-        client.authorize_url_impl::<&str>("code", None, None)
+        client.authorize_url_impl("code", None)
     }
 
     ///
@@ -1432,7 +1208,7 @@ pub mod insecure {
     /// It is highly recommended to use the `Client::authorize_url_implicit` function instead.
     ///
     pub fn authorize_url_implicit(client: &Client) -> Url {
-        client.authorize_url_impl::<&str>("token", None, None)
+        client.authorize_url_impl("token", None)
     }
 }
 
@@ -1440,11 +1216,7 @@ pub mod insecure {
 /// Helper methods used by OAuth2 implementations/extensions.
 ///
 pub mod helpers {
-    use std;
-
-    use serde::ser;
-    use serde::ser::{Impossible, SerializeStructVariant, SerializeTupleVariant};
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer};
     use url::Url;
 
     ///
@@ -1598,192 +1370,5 @@ pub mod helpers {
         S: Serializer,
     {
         serializer.serialize_str(url.as_str())
-    }
-
-    ///
-    /// Serde string serializer for an enum.
-    ///
-    /// Source:
-    /// [https://github.com/serde-rs/serde/issues/553](https://github.com/serde-rs/serde/issues/553)
-    ///
-    pub fn variant_name<T: Serialize>(t: &T) -> &'static str {
-        #[derive(Debug)]
-        struct NotEnum;
-        type Result<T> = std::result::Result<T, NotEnum>;
-        impl std::error::Error for NotEnum {
-            fn description(&self) -> &str {
-                "not struct"
-            }
-        }
-        impl std::fmt::Display for NotEnum {
-            fn fmt(&self, _f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                unimplemented!()
-            }
-        }
-        impl ser::Error for NotEnum {
-            fn custom<T: std::fmt::Display>(_msg: T) -> Self {
-                NotEnum
-            }
-        }
-
-        struct VariantName;
-        impl Serializer for VariantName {
-            type Ok = &'static str;
-            type Error = NotEnum;
-            type SerializeSeq = Impossible<Self::Ok, Self::Error>;
-            type SerializeTuple = Impossible<Self::Ok, Self::Error>;
-            type SerializeTupleStruct = Impossible<Self::Ok, Self::Error>;
-            type SerializeTupleVariant = Enum;
-            type SerializeMap = Impossible<Self::Ok, Self::Error>;
-            type SerializeStruct = Impossible<Self::Ok, Self::Error>;
-            type SerializeStructVariant = Enum;
-            fn serialize_bool(self, _v: bool) -> Result<Self::Ok> {
-                Err(NotEnum)
-            }
-            fn serialize_i8(self, _v: i8) -> Result<Self::Ok> {
-                Err(NotEnum)
-            }
-            fn serialize_i16(self, _v: i16) -> Result<Self::Ok> {
-                Err(NotEnum)
-            }
-            fn serialize_i32(self, _v: i32) -> Result<Self::Ok> {
-                Err(NotEnum)
-            }
-            fn serialize_i64(self, _v: i64) -> Result<Self::Ok> {
-                Err(NotEnum)
-            }
-            fn serialize_u8(self, _v: u8) -> Result<Self::Ok> {
-                Err(NotEnum)
-            }
-            fn serialize_u16(self, _v: u16) -> Result<Self::Ok> {
-                Err(NotEnum)
-            }
-            fn serialize_u32(self, _v: u32) -> Result<Self::Ok> {
-                Err(NotEnum)
-            }
-            fn serialize_u64(self, _v: u64) -> Result<Self::Ok> {
-                Err(NotEnum)
-            }
-            fn serialize_f32(self, _v: f32) -> Result<Self::Ok> {
-                Err(NotEnum)
-            }
-            fn serialize_f64(self, _v: f64) -> Result<Self::Ok> {
-                Err(NotEnum)
-            }
-            fn serialize_char(self, _v: char) -> Result<Self::Ok> {
-                Err(NotEnum)
-            }
-            fn serialize_str(self, _v: &str) -> Result<Self::Ok> {
-                Err(NotEnum)
-            }
-            fn serialize_bytes(self, _v: &[u8]) -> Result<Self::Ok> {
-                Err(NotEnum)
-            }
-            fn serialize_none(self) -> Result<Self::Ok> {
-                Err(NotEnum)
-            }
-            fn serialize_some<T: ?Sized + Serialize>(self, _value: &T) -> Result<Self::Ok> {
-                Err(NotEnum)
-            }
-            fn serialize_unit(self) -> Result<Self::Ok> {
-                Err(NotEnum)
-            }
-            fn serialize_unit_struct(self, _name: &'static str) -> Result<Self::Ok> {
-                Err(NotEnum)
-            }
-            fn serialize_unit_variant(
-                self,
-                _name: &'static str,
-                _variant_index: u32,
-                variant: &'static str,
-            ) -> Result<Self::Ok> {
-                Ok(variant)
-            }
-            fn serialize_newtype_struct<T: ?Sized + Serialize>(
-                self,
-                _name: &'static str,
-                _value: &T,
-            ) -> Result<Self::Ok> {
-                Err(NotEnum)
-            }
-            fn serialize_newtype_variant<T: ?Sized + Serialize>(
-                self,
-                _name: &'static str,
-                _variant_index: u32,
-                variant: &'static str,
-                _value: &T,
-            ) -> Result<Self::Ok> {
-                Ok(variant)
-            }
-            fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq> {
-                Err(NotEnum)
-            }
-            fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple> {
-                Err(NotEnum)
-            }
-            fn serialize_tuple_struct(
-                self,
-                _name: &'static str,
-                _len: usize,
-            ) -> Result<Self::SerializeTupleStruct> {
-                Err(NotEnum)
-            }
-            fn serialize_tuple_variant(
-                self,
-                _name: &'static str,
-                _variant_index: u32,
-                variant: &'static str,
-                _len: usize,
-            ) -> Result<Self::SerializeTupleVariant> {
-                Ok(Enum(variant))
-            }
-            fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap> {
-                Err(NotEnum)
-            }
-            fn serialize_struct(
-                self,
-                _name: &'static str,
-                _len: usize,
-            ) -> Result<Self::SerializeStruct> {
-                Err(NotEnum)
-            }
-            fn serialize_struct_variant(
-                self,
-                _name: &'static str,
-                _variant_index: u32,
-                variant: &'static str,
-                _len: usize,
-            ) -> Result<Self::SerializeStructVariant> {
-                Ok(Enum(variant))
-            }
-        }
-
-        struct Enum(&'static str);
-        impl SerializeStructVariant for Enum {
-            type Ok = &'static str;
-            type Error = NotEnum;
-            fn serialize_field<T: ?Sized + Serialize>(
-                &mut self,
-                _key: &'static str,
-                _value: &T,
-            ) -> Result<()> {
-                Ok(())
-            }
-            fn end(self) -> Result<Self::Ok> {
-                Ok(self.0)
-            }
-        }
-        impl SerializeTupleVariant for Enum {
-            type Ok = &'static str;
-            type Error = NotEnum;
-            fn serialize_field<T: ?Sized + Serialize>(&mut self, _value: &T) -> Result<()> {
-                Ok(())
-            }
-            fn end(self) -> Result<Self::Ok> {
-                Ok(self.0)
-            }
-        }
-
-        t.serialize(VariantName).unwrap()
     }
 }
