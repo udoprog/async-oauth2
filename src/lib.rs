@@ -216,7 +216,6 @@
 use std::{borrow::Cow, convert::Into, fmt, ops::Deref, time::Duration};
 
 use failure::{Error, Fail};
-use futures::{Future, Stream};
 use rand::{thread_rng, Rng};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -846,15 +845,11 @@ impl<'a> RequestBuilder<'a> {
     }
 
     /// Execute the token request.
-    pub fn execute<T>(self) -> impl Future<Item = T, Error = RequestTokenError>
+    pub async fn execute<T>(self) -> Result<T, RequestTokenError>
     where
         T: TokenResponse,
     {
-        use reqwest::{
-            header,
-            r#async::{Body, Decoder},
-            Method,
-        };
+        use reqwest::{header, Method};
 
         let token_url = self
             .token_url
@@ -880,81 +875,75 @@ impl<'a> RequestBuilder<'a> {
             header::HeaderValue::from_static(CONTENT_TYPE_JSON),
         );
 
-        let mut form = url::form_urlencoded::Serializer::new(String::new());
+        let request = {
+            let mut form = url::form_urlencoded::Serializer::new(String::new());
 
-        // FIXME: add support for auth extensions? e.g., client_secret_jwt and private_key_jwt
-        match self.auth_type {
-            AuthType::RequestBody => {
-                form.append_pair("client_id", self.client_id.as_str());
+            // FIXME: add support for auth extensions? e.g., client_secret_jwt and private_key_jwt
+            match self.auth_type {
+                AuthType::RequestBody => {
+                    form.append_pair("client_id", self.client_id.as_str());
 
-                if let Some(client_secret) = self.client_secret {
-                    form.append_pair("client_secret", client_secret.secret().as_str());
-                }
-            }
-            AuthType::BasicAuth => {
-                // Section 2.3.1 of RFC 6749 requires separately url-encoding the id and secret
-                // before using them as HTTP Basic auth username and password. Note that this is
-                // not standard for ordinary Basic auth, so curl won't do it for us.
-                let username = url_encode(self.client_id.as_str());
-
-                let password = match self.client_secret {
-                    Some(client_secret) => Some(url_encode(client_secret.secret().as_str())),
-                    None => None,
-                };
-
-                request = request.basic_auth(&username, password.as_ref());
-            }
-        }
-
-        for (key, value) in self.params {
-            form.append_pair(key.as_ref(), value.as_ref());
-        }
-
-        if let Some(ref redirect_url) = self.redirect_url {
-            form.append_pair("redirect_uri", redirect_url.as_str());
-        }
-
-        request = request.header(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static("application/x-www-form-urlencoded"),
-        );
-        request = request.body(Body::from(form.finish().into_bytes()));
-
-        request
-            .send()
-            .map_err(RequestTokenError::Client)
-            .and_then(|mut res| {
-                let body = std::mem::replace(res.body_mut(), Decoder::empty());
-                body.concat2()
-                    .map(move |body| (res, body))
-                    .map_err(RequestTokenError::Client)
-            })
-            .and_then(|(res, body)| {
-                let status = res.status();
-
-                if !status.is_success() {
-                    if body.is_empty() {
-                        return Err(RequestTokenError::Other(
-                            "Server returned empty error response".into(),
-                        ));
-                    } else {
-                        let error = match serde_json::from_slice::<ErrorResponse>(body.as_ref()) {
-                            Ok(error) => RequestTokenError::ServerResponse(error),
-                            Err(error) => RequestTokenError::Parse(error, body.as_ref().to_vec()),
-                        };
-                        return Err(error);
+                    if let Some(client_secret) = self.client_secret {
+                        form.append_pair("client_secret", client_secret.secret().as_str());
                     }
                 }
+                AuthType::BasicAuth => {
+                    // Section 2.3.1 of RFC 6749 requires separately url-encoding the id and secret
+                    // before using them as HTTP Basic auth username and password. Note that this is
+                    // not standard for ordinary Basic auth, so curl won't do it for us.
+                    let username = url_encode(self.client_id.as_str());
 
-                if body.is_empty() {
-                    Err(RequestTokenError::Other(
-                        "Server returned empty response body".into(),
-                    ))
-                } else {
-                    serde_json::from_slice(body.as_ref())
-                        .map_err(|e| RequestTokenError::Parse(e, body.as_ref().to_vec()))
+                    let password = match self.client_secret {
+                        Some(client_secret) => Some(url_encode(client_secret.secret().as_str())),
+                        None => None,
+                    };
+
+                    request = request.basic_auth(&username, password.as_ref());
                 }
-            })
+            }
+
+            for (key, value) in self.params {
+                form.append_pair(key.as_ref(), value.as_ref());
+            }
+
+            if let Some(ref redirect_url) = self.redirect_url {
+                form.append_pair("redirect_uri", redirect_url.as_str());
+            }
+
+            request = request.header(
+                header::CONTENT_TYPE,
+                header::HeaderValue::from_static("application/x-www-form-urlencoded"),
+            );
+
+            request.body(form.finish().into_bytes())
+        };
+
+        let res = request.send().await.map_err(RequestTokenError::Client)?;
+        let status = res.status();
+        let body = res.bytes().await.map_err(RequestTokenError::Client)?;
+
+        if !status.is_success() {
+            if body.is_empty() {
+                return Err(RequestTokenError::Other(
+                    "Server returned empty error response".into(),
+                ));
+            } else {
+                let error = match serde_json::from_slice::<ErrorResponse>(body.as_ref()) {
+                    Ok(error) => RequestTokenError::ServerResponse(error),
+                    Err(error) => RequestTokenError::Parse(error, body.as_ref().to_vec()),
+                };
+                return Err(error);
+            }
+        }
+
+        if body.is_empty() {
+            Err(RequestTokenError::Other(
+                "Server returned empty response body".into(),
+            ))
+        } else {
+            serde_json::from_slice(body.as_ref())
+                .map_err(|e| RequestTokenError::Parse(e, body.as_ref().to_vec()))
+        }
     }
 }
 
