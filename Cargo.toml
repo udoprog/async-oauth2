@@ -14,7 +14,7 @@ serde = {version = "1.0.89", features = ["derive"]}
 serde_json = "1.0.39"
 sha2 = "0.8.0"
 url = "2.1"
-reqwest = { version = "0.10.0-alpha.0", git = "https://github.com/seanmonstar/reqwest.git" }
+reqwest = { version = "0.10.0-alpha.0", git = "https://github.com/seanmonstar/reqwest.git", rev = "ebe57e10" }
 
 [dev-dependencies]
 tokio = { version = "0.2.0-alpha.5" }
