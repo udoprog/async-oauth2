@@ -185,7 +185,6 @@ macro_rules! new_type {
         $new_doc:expr,
     ) => {
         $(#[$attr])*
-        #[derive(Clone, Debug, PartialEq)]
         pub struct $name(
             $(#[$type_attr])*
             $type
@@ -260,7 +259,7 @@ macro_rules! new_secret_type {
 
 new_type! {
     /// Access token scope, as defined by the authorization server.
-    #[derive(Deserialize, Serialize)]
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
     pub struct Scope(String);
 }
 
@@ -273,14 +272,14 @@ impl AsRef<str> for Scope {
 new_type! {
     /// Code Challenge used for [PKCE]((https://tools.ietf.org/html/rfc7636)) protection via the
     /// `code_challenge` parameter.
-    #[derive(Deserialize, Serialize)]
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
     pub struct PkceCodeChallengeS256(String);
 }
 
 new_type! {
     /// Code Challenge Method used for [PKCE]((https://tools.ietf.org/html/rfc7636)) protection
     /// via the `code_challenge_method` parameter.
-    #[derive(Deserialize, Serialize)]
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
     pub struct PkceCodeChallengeMethod(String);
 }
 
