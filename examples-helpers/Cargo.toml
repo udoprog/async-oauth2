@@ -1,0 +1,16 @@
+[package]
+name = "examples-helpers"
+version = "0.0.0"
+authors = ["John-John Tedro <udoprog@tedro.se>"]
+edition = "2018"
+
+[dependencies]
+hyper = "=0.13.0-alpha.4"
+serde = {version = "1.0.101", features = ["derive"]}
+serde_urlencoded = "0.6.1"
+futures-preview = { version = "=0.3.0-alpha.19", features = ["async-await"] }
+tower-service = "=0.3.0-alpha.2"
+log = "0.4.8"
+failure = "0.1.5"
+clap = "2.33.0"
+async-oauth2 = {path = ".."}

@@ -1,5 +1,5 @@
-#![warn(missing_docs)]
-//!
+#![deny(missing_docs)]
+
 //! A simple implementation of the OAuth2 flow, trying to adhere as much as possible to
 //! [RFC 6749](https://tools.ietf.org/html/rfc6749).
 //!
@@ -17,17 +17,17 @@
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create an OAuth2 client by specifying the client ID, client secret, authorization URL and
 //! // token URL.
-//! let mut client = Client::new("client_id".to_string(), Url::parse("http://authorize")?)?;
-//! client.set_client_secret(ClientSecret::new("client_secret".to_string()));
-//! client.set_token_url(Url::parse("http://token")?);
+//! let mut client = Client::new("client_id", Url::parse("http://authorize")?, Url::parse("http://token")?);
+//! client.set_client_secret("client_secret");
 //! // Set the URL the user will be redirected to after the authorization process.
 //! client.set_redirect_url(Url::parse("http://redirect")?);
 //! // Set the desired scopes.
-//! client.add_scope(Scope::new("read".to_string()));
-//! client.add_scope(Scope::new("write".to_string()));
+//! client.add_scope("read");
+//! client.add_scope("write");
 //!
 //! // Generate the full authorization URL.
-//! let (auth_url, csrf_token) = client.authorize_url(CsrfToken::new_random);
+//! let state = State::new_random();
+//! let auth_url = client.authorize_url(&state);
 //!
 //! // This is the URL you should redirect the user to, in order to trigger the authorization
 //! // process.
@@ -35,10 +35,10 @@
 //!
 //! // Once the user has been redirected to the redirect URL, you'll have access to the
 //! // authorization code. For security reasons, your code should verify that the `state`
-//! // parameter returned by the server matches `csrf_state`.
+//! // parameter returned by the server matches `state`.
 //!
 //! // Now you can trade it for an access token.
-//! let token_result = client.exchange_code(AuthorizationCode::new("some authorization code".to_string()));
+//! let token_result = client.exchange_code("some authorization code");
 //!
 //! // Unwrapping token_result will either produce a Token or a RequestTokenError.
 //! # Ok(())
@@ -59,11 +59,12 @@
 //!
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut client = Client::new(String::from("client_id"), Url::parse("http://authorize")?)?;
-//! client.set_client_secret(ClientSecret::new("client_secret".to_string()));
+//! let mut client = Client::new("client_id", Url::parse("http://authorize")?, Url::parse("http://token")?);
+//! client.set_client_secret("client_secret");
 //!
 //! // Generate the full authorization URL.
-//! let (auth_url, csrf_token) = client.authorize_url_implicit(CsrfToken::new_random);
+//! let state = State::new_random();
+//! let auth_url = client.authorize_url_implicit(&state);
 //!
 //! // This is the URL you should redirect the user to, in order to trigger the authorization
 //! // process.
@@ -71,7 +72,7 @@
 //!
 //! // Once the user has been redirected to the redirect URL, you'll have the access code.
 //! // For security reasons, your code should verify that the `state` parameter returned by the
-//! // server matches `csrf_state`.
+//! // server matches `state`.
 //!
 //! # Ok(())
 //! # }
@@ -90,15 +91,18 @@
 //!
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut client = Client::new("client_id".to_string(), Url::parse("http://authorize")?)?;
+//! let reqwest_client = reqwest::r#async::Client::new();
+//! let mut client = Client::new("client_id", Url::parse("http://authorize")?, Url::parse("http://token")?);
 //!
-//! client.set_client_secret(ClientSecret::new("client_secret".to_string()));
-//! client.set_token_url(Url::parse("http://token")?);
-//! client.add_scope(Scope::new("read".to_string()));
+//! client.set_client_secret("client_secret");
+//! client.add_scope("read");
 //!
-//! let request = client.exchange_password("user", "pass");
+//! let token = client
+//!     .exchange_password("user", "pass")
+//!     .with_client(&reqwest_client)
+//!     .execute::<StandardToken>()
+//!     .await?;
 //!
-//! let token = request.execute::<StandardToken>().await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -116,12 +120,15 @@
 //!
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut client = Client::new("client_id".to_string(), Url::parse("http://authorize")?)?;
-//! client.set_client_secret(ClientSecret::new("client_secret".to_string()));
-//! client.set_token_url(Url::parse("http://token")?);
-//! client.add_scope(Scope::new("read".to_string()));
+//! let reqwest_client = reqwest::r#async::Client::new();
+//! let mut client = Client::new("client_id", Url::parse("http://authorize")?, Url::parse("http://token")?);
+//! client.set_client_secret("client_secret");
+//! client.add_scope("read");
 //!
-//! let token_result = client.exchange_client_credentials().execute::<StandardToken>();
+//! let token_result = client.exchange_client_credentials()
+//!     .with_client(&reqwest_client)
+//!     .execute::<StandardToken>();
+//!
 //! # Ok(())
 //! # }
 //! ```
@@ -133,13 +140,12 @@
 //! - [Google](https://github.com/ramosbugs/oauth2-rs/blob/master/examples/google.rs)
 //! - [Github](https://github.com/ramosbugs/oauth2-rs/blob/master/examples/github.rs)
 
-use std::{borrow::Cow, error, fmt, ops::Deref, time::Duration};
+use std::{borrow::Cow, error, fmt, time::Duration};
 
 use rand::{thread_rng, Rng};
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use url::Url;
+pub use url::Url;
 
 const CONTENT_TYPE_JSON: &str = "application/json";
 
@@ -196,7 +202,7 @@ macro_rules! new_type {
             }
         }
 
-        impl Deref for $name {
+        impl std::ops::Deref for $name {
             type Target = $type;
 
             fn deref(&self) -> &$type {
@@ -207,6 +213,30 @@ macro_rules! new_type {
         impl Into<$type> for $name {
             fn into(self) -> $type {
                 self.0
+            }
+        }
+
+        impl From<String> for $name {
+            fn from(value: String) -> Self {
+                Self(value)
+            }
+        }
+
+        impl<'a> From<&'a str> for $name {
+            fn from(value: &'a str) -> Self {
+                Self(value.to_string())
+            }
+        }
+
+        impl<'a> From<&'a String> for $name {
+            fn from(value: &'a String) -> Self {
+                Self(value.to_string())
+            }
+        }
+
+        impl AsRef<str> for $name {
+            fn as_ref(&self) -> &str {
+                self
             }
         }
     }
@@ -249,9 +279,39 @@ macro_rules! new_secret_type {
             pub fn secret(&self) -> &$type { &self.0 }
         }
 
+        impl std::ops::Deref for $name {
+            type Target = $type;
+
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+
         impl fmt::Debug for $name {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 write!(f, concat!(stringify!($name), "([redacted])"))
+            }
+        }
+    };
+}
+
+macro_rules! string_conversions {
+    ($name:ty) => {
+        impl From<String> for $name {
+            fn from(value: String) -> Self {
+                Self(value)
+            }
+        }
+
+        impl<'a> From<&'a str> for $name {
+            fn from(value: &'a str) -> Self {
+                Self(value.to_string())
+            }
+        }
+
+        impl<'a> From<&'a String> for $name {
+            fn from(value: &'a String) -> Self {
+                Self(value.to_string())
             }
         }
     };
@@ -261,12 +321,6 @@ new_type! {
     /// Access token scope, as defined by the authorization server.
     #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
     pub struct Scope(String);
-}
-
-impl AsRef<str> for Scope {
-    fn as_ref(&self) -> &str {
-        self
-    }
 }
 
 new_type! {
@@ -290,18 +344,19 @@ new_secret_type! {
     pub struct ClientSecret(String);
 }
 
+string_conversions!(ClientSecret);
+
 new_secret_type! {
     /// Value used for [CSRF]((https://tools.ietf.org/html/rfc6749#section-10.12)) protection
     /// via the `state` parameter.
     #[must_use]
-    #[derive(Deserialize, Serialize)]
-    pub struct CsrfToken(String);
+    pub struct State(Vec<u8>);
 }
 
-impl CsrfToken {
+impl State {
     /// Generate a new random, base64-encoded 128-bit CSRF token.
     pub fn new_random() -> Self {
-        CsrfToken::new_random_len(16)
+        State::new_random_len(16)
     }
 
     /// Generate a new random, base64-encoded CSRF token of the specified length.
@@ -309,12 +364,36 @@ impl CsrfToken {
     /// # Arguments
     ///
     /// * `num_bytes` - Number of random bytes to generate, prior to base64-encoding.
-    pub fn new_random_len(num_bytes: u32) -> Self {
-        let random_bytes: Vec<u8> = (0..num_bytes).map(|_| thread_rng().gen::<u8>()).collect();
-        CsrfToken::new(base64::encode_config(
-            &random_bytes,
-            base64::URL_SAFE_NO_PAD,
-        ))
+    pub fn new_random_len(num_bytes: usize) -> Self {
+        let mut random_bytes = vec![0u8; num_bytes];
+        thread_rng().fill(random_bytes.as_mut_slice());
+        State(random_bytes)
+    }
+
+    /// Convert into base64.
+    pub fn to_base64(&self) -> String {
+        base64::encode_config(&self.0, base64::URL_SAFE_NO_PAD)
+    }
+}
+
+impl serde::Serialize for State {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.to_base64().serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for State {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let bytes =
+            base64::decode_config(&s, base64::URL_SAFE_NO_PAD).map_err(serde::de::Error::custom)?;
+        Ok(Self(bytes))
     }
 }
 
@@ -326,6 +405,8 @@ new_secret_type! {
     #[derive(Deserialize, Serialize)]
     pub struct PkceCodeVerifierS256(String);
 }
+
+string_conversions!(PkceCodeVerifierS256);
 
 impl PkceCodeVerifierS256 {
     /// Generate a new random, base64-encoded code verifier.
@@ -380,11 +461,15 @@ new_secret_type! {
     pub struct AuthorizationCode(String);
 }
 
+string_conversions!(AuthorizationCode);
+
 new_secret_type! {
     /// Refresh token used to obtain a new access token (if supported by the authorization server).
     #[derive(Deserialize, Serialize)]
     pub struct RefreshToken(String);
 }
+
+string_conversions!(RefreshToken);
 
 new_secret_type! {
     /// Access token returned by the token endpoint and used to access protected resources.
@@ -392,21 +477,24 @@ new_secret_type! {
     pub struct AccessToken(String);
 }
 
+string_conversions!(AccessToken);
+
 new_secret_type! {
     /// Resource owner's password used directly as an authorization grant to obtain an access
     /// token.
     pub struct ResourceOwnerPassword(String);
 }
 
+string_conversions!(ResourceOwnerPassword);
+
 /// Stores the configuration for an OAuth2 client.
 #[derive(Clone, Debug)]
 pub struct Client {
-    client: reqwest::r#async::Client,
     client_id: String,
     client_secret: Option<ClientSecret>,
     auth_url: Url,
     auth_type: AuthType,
-    token_url: Option<Url>,
+    token_url: Url,
     scopes: Vec<Scope>,
     redirect_url: Option<Url>,
 }
@@ -417,9 +505,6 @@ impl Client {
     /// # Arguments
     ///
     /// * `client_id` -  Client ID
-    /// * `client_secret` -  Optional client secret. A client secret is generally used for private
-    ///   (server-side) OAuth2 clients and omitted from public (client-side or native app) OAuth2
-    ///   clients (see [RFC 8252](https://tools.ietf.org/html/rfc8252)).
     /// * `auth_url` -  Authorization endpoint: used by the client to obtain authorization from
     ///   the resource owner via user-agent redirection. This URL is used in all standard OAuth2
     ///   flows except the [Resource Owner Password Credentials
@@ -430,36 +515,26 @@ impl Client {
     ///   all standard OAuth2 flows except the
     ///   [Implicit Grant](https://tools.ietf.org/html/rfc6749#section-4.2). If this value is set
     ///   to `None`, the `exchange_*` methods will return `Err(RequestTokenError::Other(_))`.
-    pub fn new(client_id: String, auth_url: Url) -> Result<Self, NewClientError> {
-        let client = reqwest::r#async::Client::builder()
-            .redirect(reqwest::RedirectPolicy::none())
-            .build()?;
-
-        Ok(Client {
-            client,
-            client_id,
+    pub fn new(client_id: impl AsRef<str>, auth_url: Url, token_url: Url) -> Self {
+        Client {
+            client_id: client_id.as_ref().to_string(),
             client_secret: None,
             auth_url,
             auth_type: AuthType::BasicAuth,
-            token_url: None,
+            token_url,
             scopes: Vec::new(),
             redirect_url: None,
-        })
+        }
     }
 
     /// Configure the client secret to use.
-    pub fn set_client_secret(&mut self, client_secret: ClientSecret) {
-        self.client_secret = Some(client_secret);
-    }
-
-    /// Set the token URL for this client.
-    pub fn set_token_url(&mut self, token_url: Url) {
-        self.token_url = Some(token_url);
+    pub fn set_client_secret(&mut self, client_secret: impl Into<ClientSecret>) {
+        self.client_secret = Some(client_secret.into());
     }
 
     /// Appends a new scope to the authorization URL.
-    pub fn add_scope(&mut self, scope: Scope) {
-        self.scopes.push(scope);
+    pub fn add_scope(&mut self, scope: impl Into<Scope>) {
+        self.scopes.push(scope.into());
     }
 
     /// Configures the type of client authentication used for communicating with the authorization
@@ -477,29 +552,24 @@ impl Client {
     }
 
     /// Produces the full authorization URL used by the
-    /// [Authorization Code Grant](https://tools.ietf.org/html/rfc6749#section-4.1) flow, which
-    /// is the most common OAuth2 flow.
+    /// [Authorization Code Grant](https://tools.ietf.org/html/rfc6749#section-4.1)
+    /// flow, which is the most common OAuth2 flow.
     ///
     /// # Arguments
     ///
-    /// * `state_fn` - A function that returns an opaque value used by the client to maintain state
-    ///   between the request and callback. The authorization server includes this value when
-    ///   redirecting the user-agent back to the client.
+    /// * `state` - A state value to include in the request. The authorization
+    ///   server includes this value when redirecting the user-agent back to the
+    ///   client.
     ///
     /// # Security Warning
     ///
-    /// Callers should use a fresh, unpredictable `state` for each authorization request and verify
-    /// that this value matches the `state` parameter passed by the authorization server to the
-    /// redirect URI. Doing so mitigates
+    /// Callers should use a fresh, unpredictable `state` for each authorization
+    /// request and verify that this value matches the `state` parameter passed
+    /// by the authorization server to the redirect URI. Doing so mitigates
     /// [Cross-Site Request Forgery](https://tools.ietf.org/html/rfc6749#section-10.12)
-    ///  attacks. To disable CSRF protections (NOT recommended), use `insecure::authorize_url`
-    ///  instead.
-    pub fn authorize_url<F>(&self, state_fn: F) -> (Url, CsrfToken)
-    where
-        F: FnOnce() -> CsrfToken,
-    {
-        let state = state_fn();
-        (self.authorize_url_impl("code", Some(&state)), state)
+    /// attacks.
+    pub fn authorize_url(&self, state: &State) -> Url {
+        self.authorize_url_impl("code", state)
     }
 
     /// Produces the full authorization URL used by the
@@ -507,9 +577,9 @@ impl Client {
     ///
     /// # Arguments
     ///
-    /// * `state_fn` - A function that returns an opaque value used by the client to maintain state
-    ///   between the request and callback. The authorization server includes this value when
-    ///   redirecting the user-agent back to the client.
+    /// * `state` - A state value to include in the request. The authorization
+    ///   server includes this value when redirecting the user-agent back to the
+    ///   client.
     ///
     /// # Security Warning
     ///
@@ -517,17 +587,12 @@ impl Client {
     /// that this value matches the `state` parameter passed by the authorization server to the
     /// redirect URI. Doing so mitigates
     /// [Cross-Site Request Forgery](https://tools.ietf.org/html/rfc6749#section-10.12)
-    ///  attacks. To disable CSRF protections (NOT recommended), use
-    /// `insecure::authorize_url_implicit` instead.
-    pub fn authorize_url_implicit<F>(&self, state_fn: F) -> (Url, CsrfToken)
-    where
-        F: FnOnce() -> CsrfToken,
-    {
-        let state = state_fn();
-        (self.authorize_url_impl("token", Some(&state)), state)
+    ///  attacks.
+    pub fn authorize_url_implicit(&self, state: &State) -> Url {
+        self.authorize_url_impl("token", state)
     }
 
-    fn authorize_url_impl(&self, response_type: &str, state_opt: Option<&CsrfToken>) -> Url {
+    fn authorize_url_impl(&self, response_type: &str, state: &State) -> Url {
         let scopes = self
             .scopes
             .iter()
@@ -551,9 +616,7 @@ impl Client {
                 query.append_pair("scope", &scopes);
             }
 
-            if let Some(state) = state_opt {
-                query.append_pair("state", state.secret());
-            }
+            query.append_pair("state", &state.to_base64());
         }
 
         url
@@ -565,7 +628,9 @@ impl Client {
     /// an access token from the authorization server.
     ///
     /// See https://tools.ietf.org/html/rfc6749#section-4.1.3
-    pub fn exchange_code<'a>(&'a self, code: AuthorizationCode) -> RequestBuilder<'a> {
+    pub fn exchange_code(&self, code: impl Into<AuthorizationCode>) -> Request<'_> {
+        let code = code.into();
+
         self.request_token()
             .param("grant_type", "authorization_code")
             .param("code", code.secret().to_string())
@@ -574,7 +639,14 @@ impl Client {
     /// Requests an access token for the *password* grant type.
     ///
     /// See https://tools.ietf.org/html/rfc6749#section-4.3.2
-    pub fn exchange_password<'a>(&'a self, username: &str, password: &str) -> RequestBuilder<'a> {
+    pub fn exchange_password<'a>(
+        &'a self,
+        username: impl AsRef<str>,
+        password: impl AsRef<str>,
+    ) -> Request<'a> {
+        let username = username.as_ref();
+        let password = password.as_ref();
+
         let mut builder = self
             .request_token()
             .param("grant_type", "password")
@@ -600,7 +672,7 @@ impl Client {
     /// Requests an access token for the *client credentials* grant type.
     ///
     /// See https://tools.ietf.org/html/rfc6749#section-4.4.2
-    pub fn exchange_client_credentials<'a>(&'a self) -> RequestBuilder<'a> {
+    pub fn exchange_client_credentials(&self) -> Request<'_> {
         let mut builder = self
             .request_token()
             .param("grant_type", "client_credentials");
@@ -624,17 +696,16 @@ impl Client {
     /// Exchanges a refresh token for an access token
     ///
     /// See https://tools.ietf.org/html/rfc6749#section-6
-    pub fn exchange_refresh_token(&self, refresh_token: &RefreshToken) -> RequestBuilder {
+    pub fn exchange_refresh_token(&self, refresh_token: &RefreshToken) -> Request {
         self.request_token()
             .param("grant_type", "refresh_token")
             .param("refresh_token", refresh_token.secret().to_string())
     }
 
     /// Construct a request builder for the token URL.
-    fn request_token(&self) -> RequestBuilder<'_> {
-        RequestBuilder {
-            client: &self.client,
-            token_url: self.token_url.as_ref(),
+    fn request_token(&self) -> Request<'_> {
+        Request {
+            token_url: &self.token_url,
             auth_type: self.auth_type,
             client_id: &self.client_id,
             client_secret: self.client_secret.as_ref(),
@@ -644,26 +715,13 @@ impl Client {
     }
 }
 
-/// A token request that is in progress.
-pub struct RequestBuilder<'a> {
-    client: &'a reqwest::r#async::Client,
-    token_url: Option<&'a Url>,
-    auth_type: AuthType,
-    client_id: &'a str,
-    client_secret: Option<&'a ClientSecret>,
-    /// Configured redirect URL.
-    redirect_url: Option<&'a Url>,
-    /// Extra parameters.
-    params: Vec<(Cow<'a, str>, Cow<'a, str>)>,
+/// A request wrapped in a client, ready to be executed.
+pub struct ClientRequest<'a, 'client> {
+    request: Request<'a>,
+    client: &'client reqwest::r#async::Client,
 }
 
-impl<'a> RequestBuilder<'a> {
-    /// Set an additional request param.
-    pub fn param(mut self, key: impl Into<Cow<'a, str>>, value: impl Into<Cow<'a, str>>) -> Self {
-        self.params.push((key.into(), value.into()));
-        self
-    }
-
+impl<'a, 'b> ClientRequest<'a, 'b> {
     /// Execute the token request.
     pub async fn execute<T>(self) -> Result<T, RequestTokenError>
     where
@@ -671,20 +729,9 @@ impl<'a> RequestBuilder<'a> {
     {
         use reqwest::{header, Method};
 
-        let token_url = self
-            .token_url
-            .ok_or_else(||
-                // Arguably, it could be better to panic in this case. However, there may be
-                // situations where the library user gets the authorization server's configuration
-                // dynamically. In those cases, it would be preferable to return an `Err` rather
-                // than panic. An example situation where this might arise is OpenID Connect
-                // discovery.
-                RequestTokenError::Other("token_url must not be `None`".into()))
-            .unwrap();
+        let token_url = self.request.token_url;
 
-        let mut request = self
-            .client
-            .request(Method::POST, &token_url.to_string()[..]);
+        let mut request = self.client.request(Method::POST, &token_url.to_string());
 
         // Section 5.1 of RFC 6749 (https://tools.ietf.org/html/rfc6749#section-5.1) only permits
         // JSON responses for this request. Some providers such as GitHub have off-spec behavior
@@ -699,11 +746,11 @@ impl<'a> RequestBuilder<'a> {
             let mut form = url::form_urlencoded::Serializer::new(String::new());
 
             // FIXME: add support for auth extensions? e.g., client_secret_jwt and private_key_jwt
-            match self.auth_type {
+            match self.request.auth_type {
                 AuthType::RequestBody => {
-                    form.append_pair("client_id", self.client_id);
+                    form.append_pair("client_id", self.request.client_id);
 
-                    if let Some(client_secret) = self.client_secret {
+                    if let Some(client_secret) = self.request.client_secret {
                         form.append_pair("client_secret", client_secret.secret().as_str());
                     }
                 }
@@ -711,9 +758,9 @@ impl<'a> RequestBuilder<'a> {
                     // Section 2.3.1 of RFC 6749 requires separately url-encoding the id and secret
                     // before using them as HTTP Basic auth username and password. Note that this is
                     // not standard for ordinary Basic auth, so curl won't do it for us.
-                    let username = url_encode(self.client_id);
+                    let username = url_encode(self.request.client_id);
 
-                    let password = match self.client_secret {
+                    let password = match self.request.client_secret {
                         Some(client_secret) => Some(url_encode(client_secret.secret().as_str())),
                         None => None,
                     };
@@ -722,11 +769,11 @@ impl<'a> RequestBuilder<'a> {
                 }
             }
 
-            for (key, value) in self.params {
+            for (key, value) in self.request.params {
                 form.append_pair(key.as_ref(), value.as_ref());
             }
 
-            if let Some(ref redirect_url) = self.redirect_url {
+            if let Some(ref redirect_url) = self.request.redirect_url {
                 form.append_pair("redirect_uri", redirect_url.as_str());
             }
 
@@ -748,6 +795,8 @@ impl<'a> RequestBuilder<'a> {
                     "Server returned empty error response".into(),
                 ));
             } else {
+                println!("body: {:?}", body);
+
                 let error = match serde_json::from_slice::<ErrorResponse>(body.as_ref()) {
                     Ok(error) => RequestTokenError::ServerResponse(error),
                     Err(error) => RequestTokenError::Parse(error, body.as_ref().to_vec()),
@@ -763,6 +812,37 @@ impl<'a> RequestBuilder<'a> {
         } else {
             serde_json::from_slice(body.as_ref())
                 .map_err(|e| RequestTokenError::Parse(e, body.as_ref().to_vec()))
+        }
+    }
+}
+
+/// A token request that is in progress.
+pub struct Request<'a> {
+    token_url: &'a Url,
+    auth_type: AuthType,
+    client_id: &'a str,
+    client_secret: Option<&'a ClientSecret>,
+    /// Configured redirect URL.
+    redirect_url: Option<&'a Url>,
+    /// Extra parameters.
+    params: Vec<(Cow<'a, str>, Cow<'a, str>)>,
+}
+
+impl<'a> Request<'a> {
+    /// Set an additional request param.
+    pub fn param(mut self, key: impl Into<Cow<'a, str>>, value: impl Into<Cow<'a, str>>) -> Self {
+        self.params.push((key.into(), value.into()));
+        self
+    }
+
+    /// Wrap the request in a client.
+    pub fn with_client<'client>(
+        self,
+        client: &'client reqwest::r#async::Client,
+    ) -> ClientRequest<'a, 'client> {
+        ClientRequest {
+            client,
+            request: self,
         }
     }
 }
@@ -817,7 +897,10 @@ impl<'de> serde::de::Deserialize<'de> for TokenType {
 /// [Section 5.1 of RFC 6749](https://tools.ietf.org/html/rfc6749#section-5.1). This trait exists
 /// separately from the `StandardToken` struct to support customization by clients,
 /// such as supporting interoperability with non-standards-complaint OAuth2 providers.
-pub trait Token: Clone + fmt::Debug + DeserializeOwned + PartialEq + Serialize {
+pub trait Token
+where
+    Self: for<'a> serde::de::Deserialize<'a>,
+{
     /// REQUIRED. The access token issued by the authorization server.
     fn access_token(&self) -> &AccessToken;
 
@@ -1056,45 +1139,7 @@ impl error::Error for RequestTokenError {
     }
 }
 
-/// Insecure methods -- not recommended for most applications.
-pub mod insecure {
-    use url::Url;
-
-    use super::Client;
-
-    ///
-    /// Produces the full authorization URL used by the
-    /// [Authorization Code Grant](https://tools.ietf.org/html/rfc6749#section-4.1) flow, which
-    /// is the most common OAuth2 flow.
-    ///
-    /// # Security Warning
-    ///
-    /// The URL produced by this function is vulnerable to
-    /// [Cross-Site Request Forgery](https://tools.ietf.org/html/rfc6749#section-10.12) attacks.
-    /// It is highly recommended to use the `Client::authorize_url` function instead.
-    ///
-    pub fn authorize_url(client: &Client) -> Url {
-        client.authorize_url_impl("code", None)
-    }
-
-    ///
-    /// Produces the full authorization URL used by the
-    /// [Implicit Grant](https://tools.ietf.org/html/rfc6749#section-4.2) flow.
-    ///
-    /// # Security Warning
-    ///
-    /// The URL produced by this function is vulnerable to
-    /// [Cross-Site Request Forgery](https://tools.ietf.org/html/rfc6749#section-10.12) attacks.
-    /// It is highly recommended to use the `Client::authorize_url_implicit` function instead.
-    ///
-    pub fn authorize_url_implicit(client: &Client) -> Url {
-        client.authorize_url_impl("token", None)
-    }
-}
-
-///
 /// Helper methods used by OAuth2 implementations/extensions.
-///
 pub mod helpers {
     use serde::{Deserialize, Deserializer, Serializer};
     use url::Url;
@@ -1132,7 +1177,6 @@ pub mod helpers {
     /// }
     /// # */
     /// ```
-    ///
     pub fn deserialize_space_delimited_vec<'de, T, D>(deserializer: D) -> Result<T, D::Error>
     where
         T: Default + Deserialize<'de>,
@@ -1153,13 +1197,11 @@ pub mod helpers {
         Ok(T::default())
     }
 
-    ///
     /// Serde space-delimited string serializer for an `Option<Vec<String>>`.
     ///
     /// This function serializes a string vector into a single space-delimited string.
     /// If `string_vec_opt` is `None`, the function serializes it as `None` (e.g., `null`
     /// in the case of JSON serialization).
-    ///
     pub fn serialize_space_delimited_vec<T, S>(
         vec_opt: &Option<Vec<T>>,
         serializer: S,
@@ -1170,16 +1212,13 @@ pub mod helpers {
     {
         if let Some(ref vec) = *vec_opt {
             let space_delimited = vec.iter().map(|s| s.as_ref()).collect::<Vec<_>>().join(" ");
-
             serializer.serialize_str(&space_delimited)
         } else {
             serializer.serialize_none()
         }
     }
 
-    ///
     /// Serde string deserializer for a `Url`.
-    ///
     pub fn deserialize_url<'de, D>(deserializer: D) -> Result<Url, D::Error>
     where
         D: Deserializer<'de>,
@@ -1189,9 +1228,7 @@ pub mod helpers {
         Url::parse(url_str.as_ref()).map_err(Error::custom)
     }
 
-    ///
     /// Serde string serializer for a `Url`.
-    ///
     pub fn serialize_url<S>(url: &Url, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
