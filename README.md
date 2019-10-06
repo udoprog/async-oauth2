@@ -1,7 +1,7 @@
 # async-oauth2
 
-<a href="https://crates.io/crates/async-oauth2"><img src="https://img.shields.io/crates/v/async-oauth2.svg"></a>
-<a href="https://travis-ci.org/udoprog/async-oauth2-rs"><img src="https://travis-ci.org/udoprog/async-oauth2-rs.svg?branch=master"></a>
+[![Crates](https://img.shields.io/crates/v/async-oauth2.svg)](https://crates.io/crates/async-oauth2)
+[![Actions Status](https://github.com/udoprog/async-oauth2/workflows/Rust/badge.svg)](https://github.com/udoprog/async-oauth2/actions)
 
 An asynchronous first implementation of OAuth2 for Rust.
 
