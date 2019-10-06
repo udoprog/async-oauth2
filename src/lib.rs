@@ -162,131 +162,8 @@ pub enum AuthType {
     BasicAuth,
 }
 
-macro_rules! new_type {
-    // Convenience pattern without an impl.
-    (
-        $(#[$attr:meta])*
-        pub struct $name:ident(
-            $(#[$type_attr:meta])*
-            $type:ty
-        );
-    ) => {
-        new_type! {
-            @new_type $(#[$attr])*,
-            $name(
-                $(#[$type_attr])*
-                $type
-            ),
-            concat!("Create a new `", stringify!($name), "` to wrap the given `", stringify!($type), "`."),
-        }
-    };
-
-    // Actual implementation, after stringifying the #[doc] attr.
-    (
-        @new_type $(#[$attr:meta])*,
-        $name:ident(
-            $(#[$type_attr:meta])*
-            $type:ty
-        ),
-        $new_doc:expr,
-    ) => {
-        $(#[$attr])*
-        pub struct $name(
-            $(#[$type_attr])*
-            $type
-        );
-        impl $name {
-            #[doc = $new_doc]
-            pub fn new(s: $type) -> Self {
-                $name(s)
-            }
-        }
-
-        impl std::ops::Deref for $name {
-            type Target = $type;
-
-            fn deref(&self) -> &$type {
-                &self.0
-            }
-        }
-
-        impl Into<$type> for $name {
-            fn into(self) -> $type {
-                self.0
-            }
-        }
-
-        impl From<String> for $name {
-            fn from(value: String) -> Self {
-                Self(value)
-            }
-        }
-
-        impl<'a> From<&'a str> for $name {
-            fn from(value: &'a str) -> Self {
-                Self(value.to_string())
-            }
-        }
-
-        impl<'a> From<&'a String> for $name {
-            fn from(value: &'a String) -> Self {
-                Self(value.to_string())
-            }
-        }
-
-        impl AsRef<str> for $name {
-            fn as_ref(&self) -> &str {
-                self
-            }
-        }
-    }
-}
-
-macro_rules! new_secret_type {
-    (
-        $(#[$attr:meta])*
-        pub struct $name:ident($type:ty);
-    ) => {
-        new_secret_type! {
-            $(#[$attr])*,
-            $name($type),
-            concat!("Create a new `", stringify!($name), "` to wrap the given `", stringify!($type), "`."),
-            concat!("Get the secret contained within this `", stringify!($name), "`."),
-        }
-    };
-
-    (
-        $(#[$attr:meta])*,
-        $name:ident($type:ty),
-        $new_doc:expr,
-        $secret_doc:expr,
-    ) => {
-        $(
-            #[$attr]
-        )*
-        #[derive(Clone, PartialEq)]
-        pub struct $name($type);
-        impl $name {
-            #[doc = $new_doc]
-            pub fn new(s: $type) -> Self {
-                $name(s)
-            }
-
-            #[doc = $secret_doc]
-            /// # Security Warning
-            ///
-            /// Leaking this value may compromise the security of the OAuth2 flow.
-            pub fn secret(&self) -> &$type { &self.0 }
-        }
-
-        impl std::ops::Deref for $name {
-            type Target = $type;
-
-            fn deref(&self) -> &Self::Target {
-                &self.0
-            }
-        }
-
+macro_rules! redacted_debug {
+    ($name:ident) => {
         impl fmt::Debug for $name {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 write!(f, concat!(stringify!($name), "([redacted])"))
@@ -295,78 +172,99 @@ macro_rules! new_secret_type {
     };
 }
 
-macro_rules! string_conversions {
-    ($name:ty) => {
-        impl From<String> for $name {
-            fn from(value: String) -> Self {
-                Self(value)
+/// borrowed newtype plumbing
+macro_rules! borrowed_newtype {
+    ($name:ident, $borrowed:ty) => {
+        impl std::ops::Deref for $name {
+            type Target = $borrowed;
+
+            fn deref(&self) -> &Self::Target {
+                &self.0
             }
         }
 
-        impl<'a> From<&'a str> for $name {
-            fn from(value: &'a str) -> Self {
-                Self(value.to_string())
+        impl<'a> Into<Cow<'a, $borrowed>> for &'a $name {
+            fn into(self) -> Cow<'a, $borrowed> {
+                Cow::Borrowed(&self.0)
             }
         }
 
-        impl<'a> From<&'a String> for $name {
-            fn from(value: &'a String) -> Self {
-                Self(value.to_string())
+        impl AsRef<$borrowed> for $name {
+            fn as_ref(&self) -> &$borrowed {
+                self
             }
         }
     };
 }
 
-new_type! {
-    /// Access token scope, as defined by the authorization server.
-    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
-    pub struct Scope(String);
+/// newtype plumbing
+macro_rules! newtype {
+    ($name:ident, $owned:ty, $borrowed:ty) => {
+        borrowed_newtype!($name, $borrowed);
+
+        impl<'a> From<&'a $borrowed> for $name {
+            fn from(value: &'a $borrowed) -> Self {
+                Self(value.to_owned())
+            }
+        }
+
+        impl From<$owned> for $name {
+            fn from(value: $owned) -> Self {
+                Self(value)
+            }
+        }
+
+        impl<'a> From<&'a $owned> for $name {
+            fn from(value: &'a $owned) -> Self {
+                Self(value.to_owned())
+            }
+        }
+
+        impl<'a> Into<$owned> for $name {
+            fn into(self) -> $owned {
+                self.0
+            }
+        }
+    };
 }
 
-new_type! {
-    /// Code Challenge used for [PKCE]((https://tools.ietf.org/html/rfc7636)) protection via the
-    /// `code_challenge` parameter.
-    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
-    pub struct PkceCodeChallengeS256(String);
-}
+/// Access token scope, as defined by the authorization server.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+pub struct Scope(String);
+newtype!(Scope, String, str);
 
-new_type! {
-    /// Code Challenge Method used for [PKCE]((https://tools.ietf.org/html/rfc7636)) protection
-    /// via the `code_challenge_method` parameter.
-    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
-    pub struct PkceCodeChallengeMethod(String);
-}
+/// Code Challenge used for [PKCE]((https://tools.ietf.org/html/rfc7636)) protection via the
+/// `code_challenge` parameter.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+pub struct PkceCodeChallengeS256(String);
+newtype!(PkceCodeChallengeS256, String, str);
 
-new_secret_type! {
-    /// Client password issued to the client during the registration process described by
-    /// [Section 2.2](https://tools.ietf.org/html/rfc6749#section-2.2).
-    #[derive(Deserialize, Serialize)]
-    pub struct ClientSecret(String);
-}
+/// Code Challenge Method used for [PKCE]((https://tools.ietf.org/html/rfc7636)) protection
+/// via the `code_challenge_method` parameter.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+pub struct PkceCodeChallengeMethod(String);
+newtype!(PkceCodeChallengeMethod, String, str);
 
-string_conversions!(ClientSecret);
+/// Client password issued to the client during the registration process described by
+/// [Section 2.2](https://tools.ietf.org/html/rfc6749#section-2.2).
+#[derive(Clone, Deserialize, Serialize)]
+pub struct ClientSecret(String);
+redacted_debug!(ClientSecret);
+newtype!(ClientSecret, String, str);
 
-new_secret_type! {
-    /// Value used for [CSRF]((https://tools.ietf.org/html/rfc6749#section-10.12)) protection
-    /// via the `state` parameter.
-    #[must_use]
-    pub struct State(Vec<u8>);
-}
+/// Value used for [CSRF]((https://tools.ietf.org/html/rfc6749#section-10.12)) protection
+/// via the `state` parameter.
+#[must_use]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct State([u8; 16]);
+redacted_debug!(State);
+borrowed_newtype!(State, [u8]);
 
 impl State {
     /// Generate a new random, base64-encoded 128-bit CSRF token.
     pub fn new_random() -> Self {
-        State::new_random_len(16)
-    }
-
-    /// Generate a new random, base64-encoded CSRF token of the specified length.
-    ///
-    /// # Arguments
-    ///
-    /// * `num_bytes` - Number of random bytes to generate, prior to base64-encoding.
-    pub fn new_random_len(num_bytes: usize) -> Self {
-        let mut random_bytes = vec![0u8; num_bytes];
-        thread_rng().fill(random_bytes.as_mut_slice());
+        let mut random_bytes = [0u8; 16];
+        thread_rng().fill(&mut random_bytes);
         State(random_bytes)
     }
 
@@ -393,20 +291,19 @@ impl<'de> serde::Deserialize<'de> for State {
         let s = String::deserialize(deserializer)?;
         let bytes =
             base64::decode_config(&s, base64::URL_SAFE_NO_PAD).map_err(serde::de::Error::custom)?;
-        Ok(Self(bytes))
+        let mut buf = [0u8; 16];
+        buf.copy_from_slice(&bytes);
+        Ok(Self(buf))
     }
 }
 
-new_secret_type! {
-    /// Code Verifier used for [PKCE]((https://tools.ietf.org/html/rfc7636)) protection via the
-    /// `code_verifier` parameter. The value must have a minimum length of 43 characters and a
-    /// maximum length of 128 characters.  Each character must be ASCII alphanumeric or one of
-    /// the characters "-" / "." / "_" / "~".
-    #[derive(Deserialize, Serialize)]
-    pub struct PkceCodeVerifierS256(String);
-}
-
-string_conversions!(PkceCodeVerifierS256);
+/// Code Verifier used for [PKCE]((https://tools.ietf.org/html/rfc7636)) protection via the
+/// `code_verifier` parameter. The value must have a minimum length of 43 characters and a
+/// maximum length of 128 characters.  Each character must be ASCII alphanumeric or one of
+/// the characters "-" / "." / "_" / "~".
+#[derive(Deserialize, Serialize)]
+pub struct PkceCodeVerifierS256(String);
+newtype!(PkceCodeVerifierS256, String, str);
 
 impl PkceCodeVerifierS256 {
     /// Generate a new random, base64-encoded code verifier.
@@ -429,18 +326,18 @@ impl PkceCodeVerifierS256 {
         let random_bytes: Vec<u8> = (0..num_bytes).map(|_| thread_rng().gen::<u8>()).collect();
         let code = base64::encode_config(&random_bytes, base64::URL_SAFE_NO_PAD);
         assert!(code.len() >= 43 && code.len() <= 128);
-        PkceCodeVerifierS256::new(code)
+        PkceCodeVerifierS256(code)
     }
 
     /// Return the code challenge for the code verifier.
     pub fn code_challenge(&self) -> PkceCodeChallengeS256 {
-        let digest = Sha256::digest(self.secret().as_bytes());
-        PkceCodeChallengeS256::new(base64::encode_config(&digest, base64::URL_SAFE_NO_PAD))
+        let digest = Sha256::digest(self.as_bytes());
+        PkceCodeChallengeS256::from(base64::encode_config(&digest, base64::URL_SAFE_NO_PAD))
     }
 
     /// Return the code challenge method for this code verifier.
     pub fn code_challenge_method() -> PkceCodeChallengeMethod {
-        PkceCodeChallengeMethod::new("S256".to_string())
+        PkceCodeChallengeMethod::from("S256".to_string())
     }
 
     /// Return the extension params used for authorize_url.
@@ -455,37 +352,28 @@ impl PkceCodeVerifierS256 {
     }
 }
 
-new_secret_type! {
-    /// Authorization code returned from the authorization endpoint.
-    #[derive(Deserialize, Serialize)]
-    pub struct AuthorizationCode(String);
-}
+/// Authorization code returned from the authorization endpoint.
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AuthorizationCode(String);
+redacted_debug!(AuthorizationCode);
+newtype!(AuthorizationCode, String, str);
 
-string_conversions!(AuthorizationCode);
+/// Refresh token used to obtain a new access token (if supported by the authorization server).
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RefreshToken(String);
+redacted_debug!(RefreshToken);
+newtype!(RefreshToken, String, str);
 
-new_secret_type! {
-    /// Refresh token used to obtain a new access token (if supported by the authorization server).
-    #[derive(Deserialize, Serialize)]
-    pub struct RefreshToken(String);
-}
+/// Access token returned by the token endpoint and used to access protected resources.
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AccessToken(String);
+redacted_debug!(AccessToken);
+newtype!(AccessToken, String, str);
 
-string_conversions!(RefreshToken);
-
-new_secret_type! {
-    /// Access token returned by the token endpoint and used to access protected resources.
-    #[derive(Deserialize, Serialize)]
-    pub struct AccessToken(String);
-}
-
-string_conversions!(AccessToken);
-
-new_secret_type! {
-    /// Resource owner's password used directly as an authorization grant to obtain an access
-    /// token.
-    pub struct ResourceOwnerPassword(String);
-}
-
-string_conversions!(ResourceOwnerPassword);
+/// Resource owner's password used directly as an authorization grant to obtain an access
+/// token.
+pub struct ResourceOwnerPassword(String);
+newtype!(ResourceOwnerPassword, String, str);
 
 /// Stores the configuration for an OAuth2 client.
 #[derive(Clone, Debug)]
@@ -633,7 +521,7 @@ impl Client {
 
         self.request_token()
             .param("grant_type", "authorization_code")
-            .param("code", code.secret().to_string())
+            .param("code", code.to_string())
     }
 
     /// Requests an access token for the *password* grant type.
@@ -696,10 +584,10 @@ impl Client {
     /// Exchanges a refresh token for an access token
     ///
     /// See https://tools.ietf.org/html/rfc6749#section-6
-    pub fn exchange_refresh_token(&self, refresh_token: &RefreshToken) -> Request {
+    pub fn exchange_refresh_token(&self, refresh_token: &RefreshToken) -> Request<'_> {
         self.request_token()
             .param("grant_type", "refresh_token")
-            .param("refresh_token", refresh_token.secret().to_string())
+            .param("refresh_token", refresh_token.to_string())
     }
 
     /// Construct a request builder for the token URL.
@@ -751,7 +639,7 @@ impl<'a, 'b> ClientRequest<'a, 'b> {
                     form.append_pair("client_id", self.request.client_id);
 
                     if let Some(client_secret) = self.request.client_secret {
-                        form.append_pair("client_secret", client_secret.secret().as_str());
+                        form.append_pair("client_secret", client_secret);
                     }
                 }
                 AuthType::BasicAuth => {
@@ -761,7 +649,7 @@ impl<'a, 'b> ClientRequest<'a, 'b> {
                     let username = url_encode(self.request.client_id);
 
                     let password = match self.request.client_secret {
-                        Some(client_secret) => Some(url_encode(client_secret.secret().as_str())),
+                        Some(client_secret) => Some(url_encode(client_secret)),
                         None => None,
                     };
 
