@@ -91,7 +91,7 @@
 //!
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let reqwest_client = reqwest::r#async::Client::new();
+//! let reqwest_client = reqwest::Client::new();
 //! let mut client = Client::new("client_id", Url::parse("http://authorize")?, Url::parse("http://token")?);
 //!
 //! client.set_client_secret("client_secret");
@@ -120,7 +120,7 @@
 //!
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let reqwest_client = reqwest::r#async::Client::new();
+//! let reqwest_client = reqwest::Client::new();
 //! let mut client = Client::new("client_id", Url::parse("http://authorize")?, Url::parse("http://token")?);
 //! client.set_client_secret("client_secret");
 //! client.add_scope("read");
@@ -606,7 +606,7 @@ impl Client {
 /// A request wrapped in a client, ready to be executed.
 pub struct ClientRequest<'a, 'client> {
     request: Request<'a>,
-    client: &'client reqwest::r#async::Client,
+    client: &'client reqwest::Client,
 }
 
 impl<'a, 'b> ClientRequest<'a, 'b> {
@@ -726,7 +726,7 @@ impl<'a> Request<'a> {
     /// Wrap the request in a client.
     pub fn with_client<'client>(
         self,
-        client: &'client reqwest::r#async::Client,
+        client: &'client reqwest::Client,
     ) -> ClientRequest<'a, 'client> {
         ClientRequest {
             client,
