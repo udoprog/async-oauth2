@@ -22,9 +22,4 @@ serde = {version = "1.0.89", features = ["derive"]}
 serde_json = "1.0.39"
 sha2 = "0.8.0"
 url = "2.1"
-reqwest = "0.10.0-alpha.1"
-
-[dev-dependencies]
-tokio = "=0.2.0-alpha.6"
-futures-preview = "=0.3.0-alpha.19"
-examples-helpers = { version = "=0.0.0", path = "./examples-helpers" }
+reqwest = "=0.10.0-alpha.1"

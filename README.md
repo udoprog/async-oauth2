@@ -21,7 +21,7 @@ Documentation is available on [docs.rs](https://docs.rs/crate/async-oauth2) or c
 If you want to run some of our examples, you need to register an application that has a redirect URL of `http://localhost:8080/api/auth/redirect`, then you can run the clients like this:
 
 ```
-cargo run --example spotify --client-id <client-id> --client-secret <client-secret>
-cargo run --example google --client-id <client-id> --client-secret <client-secret>
-cargo run --example twitch --client-id <client-id> --client-secret <client-secret>
+cargo run --manifest-path=examples/Cargo.toml --bin spotify --client-id <client-id> --client-secret <client-secret>
+cargo run --manifest-path=examples/Cargo.toml --bin google --client-id <client-id> --client-secret <client-secret>
+cargo run --manifest-path=examples/Cargo.toml --bin twitch --client-id <client-id> --client-secret <client-secret>
 ```

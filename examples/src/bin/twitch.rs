@@ -3,8 +3,8 @@
 //! Note: Twitch requires you to set `client_id` and `client_secret` as extra
 //! parameters when performing the token exchange (see below).
 
-use examples_helpers::{config_from_args, listen_for_code};
 use oauth2::{AccessToken, Client, RefreshToken, Scope, State, Token, TokenType, Url};
+use oauth2_examples::{config_from_args, listen_for_code};
 use std::{error::Error, time::Duration};
 
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -47,7 +47,7 @@ impl Token for TwitchToken {
 async fn main() -> Result<(), Box<dyn Error>> {
     let config = config_from_args("Twitch Example")?;
 
-    let reqwest_client = reqwest::r#async::Client::new();
+    let reqwest_client = reqwest::Client::new();
 
     let auth_url = Url::parse("https://id.twitch.tv/oauth2/authorize")?;
     let token_url = Url::parse("https://id.twitch.tv/oauth2/token")?;
