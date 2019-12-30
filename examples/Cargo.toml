@@ -8,13 +8,13 @@ edition = "2018"
 name = "oauth2_examples"
 
 [dependencies]
-reqwest = "=0.10.0-alpha.1"
-tokio = "=0.2.0-alpha.6"
-hyper = "=0.13.0-alpha.4"
+reqwest = { version = "=0.10.0-alpha.2", git = "https://github.com/seanmonstar/reqwest" }
+tokio = { version = "0.2.6", features = ["full"] }
+hyper = "0.13.1"
 serde = {version = "1.0.101", features = ["derive"]}
 serde_urlencoded = "0.6.1"
-futures-preview = { version = "=0.3.0-alpha.19", features = ["async-await"] }
-tower-service = "=0.3.0-alpha.2"
+futures = "0.3.0"
+tower-service = "0.3.0"
 log = "0.4.8"
 failure = "0.1.5"
 clap = "2.33.0"
