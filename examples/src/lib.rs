@@ -1,4 +1,4 @@
-use failure::{format_err, Error};
+use anyhow::{anyhow, Result};
 use futures::{
     channel::oneshot,
     prelude::*,
@@ -28,7 +28,7 @@ pub struct Server {
 
 impl Service<Request<Body>> for Server {
     type Response = Response<Body>;
-    type Error = Error;
+    type Error = anyhow::Error;
     type Future = future::BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
     fn poll_ready(&mut self, _: &mut Context) -> Poll<Result<(), Self::Error>> {
@@ -49,7 +49,7 @@ impl Service<Request<Body>> for Server {
 }
 
 /// Get configuration from arguments.
-pub fn config_from_args(name: &str) -> Result<Config, Error> {
+pub fn config_from_args(name: &str) -> Result<Config> {
     let app = clap::App::new(name)
         .about("Testing out OAuth 2.0 flows")
         .arg(
@@ -69,11 +69,11 @@ pub fn config_from_args(name: &str) -> Result<Config, Error> {
 
     let client_id = m
         .value_of("client-id")
-        .ok_or_else(|| format_err!("missing: --client-id <argument>"))?
+        .ok_or_else(|| anyhow!("missing: --client-id <argument>"))?
         .to_string();
     let client_secret = m
         .value_of("client-secret")
-        .ok_or_else(|| format_err!("missing: --client-secret <argument>"))?
+        .ok_or_else(|| anyhow!("missing: --client-secret <argument>"))?
         .to_string();
 
     Ok(Config {
@@ -83,7 +83,7 @@ pub fn config_from_args(name: &str) -> Result<Config, Error> {
 }
 
 /// Listen for a code at the specified port.
-pub async fn listen_for_code(port: u32) -> Result<ReceivedCode, Error> {
+pub async fn listen_for_code(port: u32) -> Result<ReceivedCode> {
     let bind = format!("127.0.0.1:{}", port);
     log::info!("Listening on: http://{}", bind);
 

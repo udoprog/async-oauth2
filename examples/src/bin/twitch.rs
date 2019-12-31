@@ -5,7 +5,7 @@
 
 use oauth2::{AccessToken, Client, RefreshToken, Scope, State, Token, TokenType, Url};
 use oauth2_examples::{config_from_args, listen_for_code};
-use std::{error::Error, time::Duration};
+use std::time::Duration;
 
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct TwitchToken {
@@ -44,7 +44,7 @@ impl Token for TwitchToken {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> anyhow::Result<()> {
     let config = config_from_args("Twitch Example")?;
 
     let reqwest_client = reqwest::Client::new();

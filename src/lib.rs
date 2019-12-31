@@ -145,9 +145,8 @@ use std::{borrow::Cow, error, fmt, time::Duration};
 use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use thiserror::Error;
 pub use url::Url;
-
-const CONTENT_TYPE_JSON: &str = "application/json";
 
 /// Indicates whether requests to the authorization server should use basic authentication or
 /// include the parameters in the request body for requests in which either is valid.
@@ -694,13 +693,19 @@ impl<'a, 'b> ClientRequest<'a, 'b> {
         }
 
         if body.is_empty() {
-            Err(RequestTokenError::Other(
+            return Err(RequestTokenError::Other(
                 "Server returned empty response body".into(),
-            ))
-        } else {
-            serde_json::from_slice(body.as_ref())
-                .map_err(|e| RequestTokenError::Parse(e, body.as_ref().to_vec()))
+            ));
         }
+
+        return serde_json::from_slice(body.as_ref())
+            .map_err(|e| RequestTokenError::Parse(e, body.as_ref().to_vec()));
+
+        fn url_encode(s: &str) -> String {
+            url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>()
+        }
+
+        const CONTENT_TYPE_JSON: &str = "application/json";
     }
 }
 
@@ -733,10 +738,6 @@ impl<'a> Request<'a> {
             request: self,
         }
     }
-}
-
-fn url_encode(s: &str) -> String {
-    url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>()
 }
 
 /// Basic OAuth2 authorization token types.
@@ -956,31 +957,15 @@ impl fmt::Display for ErrorResponse {
     }
 }
 
+impl error::Error for ErrorResponse {}
+
 /// Errors when creating new clients.
-#[derive(Debug)]
+#[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum NewClientError {
     /// Error creating underlying reqwest client.
-    Reqwest(reqwest::Error),
-    #[doc(hidden)]
-    __Nonexhaustive,
-}
-
-impl fmt::Display for NewClientError {
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Reqwest(..) => write!(fmt, "Failed to construct client"),
-            _ => write!(fmt, "Unknown error"),
-        }
-    }
-}
-
-impl error::Error for NewClientError {
-    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        match self {
-            Self::Reqwest(e) => Some(e),
-            _ => None,
-        }
-    }
+    #[error("Failed to construct client")]
+    Reqwest(#[source] reqwest::Error),
 }
 
 impl From<reqwest::Error> for NewClientError {
@@ -990,41 +975,23 @@ impl From<reqwest::Error> for NewClientError {
 }
 
 /// Error encountered while requesting access token.
-#[derive(Debug)]
+#[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum RequestTokenError {
     /// Error response returned by authorization server. Contains the parsed `ErrorResponse`
     /// returned by the server.
-    ServerResponse(ErrorResponse),
+    #[error("Server returned error response")]
+    ServerResponse(#[source] ErrorResponse),
     /// A client error that occured.
-    Client(reqwest::Error),
+    #[error("Client error")]
+    Client(#[source] reqwest::Error),
     /// Failed to parse server response. Parse errors may occur while parsing either successful
     /// or error responses.
-    Parse(serde_json::error::Error, Vec<u8>),
+    #[error("Failed to parse server response")]
+    Parse(#[source] serde_json::error::Error, Vec<u8>),
     /// Some other type of error occurred (e.g., an unexpected server response).
+    #[error("Other error: {0}")]
     Other(Cow<'static, str>),
-    #[doc(hidden)]
-    __Nonexhaustive,
-}
-
-impl fmt::Display for RequestTokenError {
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ServerResponse(e) => write!(fmt, "Server returned error response `{}`", e),
-            Self::Client(e) => write!(fmt, "Client error: {}`", e),
-            Self::Parse(..) => write!(fmt, "Failed to parse server response"),
-            Self::Other(e) => write!(fmt, "Other error: {}", e),
-            _ => write!(fmt, "Unknown error"),
-        }
-    }
-}
-
-impl error::Error for RequestTokenError {
-    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        match self {
-            Self::Client(e) => Some(e),
-            _ => None,
-        }
-    }
 }
 
 /// Helper methods used by OAuth2 implementations/extensions.

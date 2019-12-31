@@ -1,9 +1,8 @@
 use oauth2::{Client, StandardToken, State, Url};
 use oauth2_examples::{config_from_args, listen_for_code};
-use std::error::Error;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> anyhow::Result<()> {
     let config = config_from_args("Spotify Example")?;
 
     let reqwest_client = reqwest::Client::new();

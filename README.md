@@ -3,12 +3,12 @@
 [![Crates](https://img.shields.io/crates/v/async-oauth2.svg)](https://crates.io/crates/async-oauth2)
 [![Actions Status](https://github.com/udoprog/async-oauth2/workflows/Rust/badge.svg)](https://github.com/udoprog/async-oauth2/actions)
 
-An asynchronous first implementation of OAuth2 for Rust.
+An async/await implementation of OAuth2 for Rust.
 
 This is a fork of [`oauth2-rs`](https://github.com/ramosbugs/oauth2-rs).
 
 The main differences are:
-* Removed unecessary type parameters on Client ([see discussion here]).
+* Removal of unecessary type parameters on Client ([see discussion here]).
 * Only support one client implementation (reqwest).
 * Remove most newtypes except `Scope` and the secret ones since they made the API harder to use.
 
