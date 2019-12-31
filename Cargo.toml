@@ -6,11 +6,12 @@ authors = [
   "David A. Ramos <ramos@cs.stanford.edu>",
   "John-John Tedro <udoprog@tedro.se>"
 ]
-version = "0.1.0"
+version = "0.1.1"
 license = "MIT/Apache-2.0"
 description = "Bindings for exchanging OAuth 2 tokens"
 repository = "https://github.com/udoprog/async-oauth2"
 edition = "2018"
+readme = "README.md"
 
 [lib]
 name = "oauth2"
