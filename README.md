@@ -1,5 +1,6 @@
 # async-oauth2
 
+[![Documentation](https://docs.rs/async-oauth2/badge.svg)](https://docs.rs/async-oauth2)
 [![Crates](https://img.shields.io/crates/v/async-oauth2.svg)](https://crates.io/crates/async-oauth2)
 [![Actions Status](https://github.com/udoprog/async-oauth2/workflows/Rust/badge.svg)](https://github.com/udoprog/async-oauth2/actions)
 
