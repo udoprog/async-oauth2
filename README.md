@@ -67,7 +67,7 @@ cargo run --manifest-path=examples/Cargo.toml --bin twitch --client-id <client-i
 This is a fork of [`oauth2-rs`](https://github.com/ramosbugs/oauth2-rs).
 
 The main differences are:
-* Removal of unecessary type parameters on Client ([see discussion here]).
+* Removal of unnecessary type parameters on Client ([see discussion here]).
 * Only support one client implementation (reqwest).
 * Remove most newtypes except `Scope` and the secret ones since they made the API harder to use.
 
