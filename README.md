@@ -57,9 +57,9 @@ async fn main() -> anyhow::Result<()> {
 If you want to run some of our [pre-baked examples](https://github.com/udoprog/async-oauth2/tree/master/examples), you need to register an application that has a redirect URL of `http://localhost:8080/api/auth/redirect`, then you can execute a flow like this:
 
 ```
-cargo run --manifest-path=examples/Cargo.toml --bin spotify --client-id <client-id> --client-secret <client-secret>
-cargo run --manifest-path=examples/Cargo.toml --bin google --client-id <client-id> --client-secret <client-secret>
-cargo run --manifest-path=examples/Cargo.toml --bin twitch --client-id <client-id> --client-secret <client-secret>
+cargo run --manifest-path=examples/Cargo.toml --bin spotify -- --client-id <client-id> --client-secret <client-secret>
+cargo run --manifest-path=examples/Cargo.toml --bin google -- --client-id <client-id> --client-secret <client-secret>
+cargo run --manifest-path=examples/Cargo.toml --bin twitch -- --client-id <client-id> --client-secret <client-secret>
 ```
 
 ## Relationship to oauth2-rs
