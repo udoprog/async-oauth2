@@ -614,6 +614,7 @@ impl<'a, 'b> ClientRequest<'a, 'b> {
     where
         T: Token,
     {
+        use self::RequestTokenError::*;
         use reqwest::{header, Method};
 
         let token_url = self.request.token_url;
@@ -672,34 +673,39 @@ impl<'a, 'b> ClientRequest<'a, 'b> {
             request.body(form.finish().into_bytes())
         };
 
-        let res = request.send().await.map_err(RequestTokenError::Client)?;
+        let res = request
+            .send()
+            .await
+            .map_err(|error| ReqwestError { error })?;
+
         let status = res.status();
-        let body = res.bytes().await.map_err(RequestTokenError::Client)?;
 
-        if !status.is_success() {
-            if body.is_empty() {
-                return Err(RequestTokenError::Other(
-                    "Server returned empty error response".into(),
-                ));
-            } else {
-                println!("body: {:?}", body);
-
-                let error = match serde_json::from_slice::<ErrorResponse>(body.as_ref()) {
-                    Ok(error) => RequestTokenError::ServerResponse(error),
-                    Err(error) => RequestTokenError::Parse(error, body.as_ref().to_vec()),
-                };
-                return Err(error);
-            }
-        }
+        let body = res.bytes().await.map_err(|error| ReqwestError { error })?;
 
         if body.is_empty() {
-            return Err(RequestTokenError::Other(
-                "Server returned empty response body".into(),
-            ));
+            return Err(EmptyResponse { status });
         }
 
-        return serde_json::from_slice(body.as_ref())
-            .map_err(|e| RequestTokenError::Parse(e, body.as_ref().to_vec()));
+        if !status.is_success() {
+            let error = match serde_json::from_slice::<self::ErrorResponse>(body.as_ref()) {
+                Ok(error) => error,
+                Err(error) => {
+                    return Err(BadResponse {
+                        status,
+                        error,
+                        body,
+                    });
+                }
+            };
+
+            return Err(RequestTokenError::ErrorResponse { status, error });
+        }
+
+        return serde_json::from_slice(body.as_ref()).map_err(|error| BadResponse {
+            status,
+            error,
+            body,
+        });
 
         fn url_encode(s: &str) -> String {
             url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>()
@@ -978,20 +984,61 @@ impl From<reqwest::Error> for NewClientError {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum RequestTokenError {
-    /// Error response returned by authorization server. Contains the parsed `ErrorResponse`
-    /// returned by the server.
-    #[error("Server returned error response")]
-    ServerResponse(#[source] ErrorResponse),
     /// A client error that occured.
-    #[error("Client error")]
-    Client(#[source] reqwest::Error),
+    #[error("reqwest error")]
+    ReqwestError {
+        /// Original request error.
+        #[source]
+        error: reqwest::Error,
+    },
     /// Failed to parse server response. Parse errors may occur while parsing either successful
     /// or error responses.
-    #[error("Failed to parse server response")]
-    Parse(#[source] serde_json::error::Error, Vec<u8>),
-    /// Some other type of error occurred (e.g., an unexpected server response).
-    #[error("Other error: {0}")]
-    Other(Cow<'static, str>),
+    #[error("malformed server response: {status}")]
+    BadResponse {
+        /// The status code associated with the response.
+        status: http::status::StatusCode,
+        /// The body that couldn't be deserialized.
+        body: bytes::Bytes,
+        /// Deserialization error.
+        #[source]
+        error: serde_json::error::Error,
+    },
+    /// Response with non-successful status code and a body that could be
+    /// successfully deserialized as an [ErrorResponse].
+    #[error("request resulted in error response: {status}")]
+    ErrorResponse {
+        /// The status code associated with the response.
+        status: http::status::StatusCode,
+        /// The deserialized response.
+        #[source]
+        error: ErrorResponse,
+    },
+    /// Server response was empty.
+    #[error("request resulted in empty response: {status}")]
+    EmptyResponse {
+        /// The status code associated with the empty response.
+        status: http::status::StatusCode,
+    },
+}
+
+impl RequestTokenError {
+    /// Access the status code of the error if available.
+    pub fn status(&self) -> Option<http::status::StatusCode> {
+        match *self {
+            Self::ReqwestError { ref error, .. } => error.status(),
+            Self::BadResponse { status, .. } => Some(status),
+            Self::ErrorResponse { status, .. } => Some(status),
+            Self::EmptyResponse { status, .. } => Some(status),
+        }
+    }
+
+    /// The original response body if available.
+    pub fn body(&self) -> Option<&bytes::Bytes> {
+        match *self {
+            Self::BadResponse { ref body, .. } => Some(body),
+            _ => None,
+        }
+    }
 }
 
 /// Helper methods used by OAuth2 implementations/extensions.
