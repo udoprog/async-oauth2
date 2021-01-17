@@ -8,14 +8,14 @@ edition = "2018"
 name = "oauth2_examples"
 
 [dependencies]
-reqwest = "0.10.0"
-tokio = { version = "0.2.6", features = ["full"] }
-hyper = "0.13.1"
-serde = {version = "1.0.101", features = ["derive"]}
-serde_urlencoded = "0.6.1"
-futures = "0.3.0"
+reqwest = "0.11.0"
+tokio = { version = "1.0.2", features = ["full"] }
+hyper = { version = "0.14.2", features = ["server", "http1"] }
+serde = { version = "1.0.119", features = ["derive"] }
+serde_urlencoded = "0.7.0"
+futures = "0.3.12"
 tower-service = "0.3.0"
-log = "0.4.8"
-anyhow = "1.0.26"
-clap = "2.33.0"
+log = "0.4.13"
+anyhow = "1.0.38"
+clap = "2.33.3"
 async-oauth2 = {path = ".."}
