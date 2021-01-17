@@ -8,13 +8,14 @@ authors = [
 ]
 version = "0.2.0"
 license = "MIT/Apache-2.0"
-description = "Bindings for exchanging OAuth 2 tokens"
+description = "An asynchronous OAuth2 flow implementation"
 repository = "https://github.com/udoprog/async-oauth2"
 edition = "2018"
 readme = "README.md"
 
 [lib]
 name = "oauth2"
+path = "src/lib.rs"
 
 [dependencies]
 base64 = "0.13.0"
