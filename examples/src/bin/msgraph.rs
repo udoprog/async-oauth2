@@ -3,11 +3,9 @@
 //! Note: MSGraph requires you to set `client_id` and `client_secret` as extra
 //! parameters when performing the token exchange (see below).
 
-use oauth2::{Client, Url, StandardToken};
+use oauth2::{Client, StandardToken, Url};
 
 use anyhow::{anyhow, Result};
-
-
 
 pub struct ConfigMS {
     pub client_id: String,
@@ -48,7 +46,7 @@ pub fn config_from_args_ms(name: &str) -> Result<ConfigMS> {
         .ok_or_else(|| anyhow!("missing: --client-secret <argument>"))?
         .to_string();
 
-    let  tenant_domain = m
+    let tenant_domain = m
         .value_of("tenant-domain")
         .ok_or_else(|| anyhow!("missing: --tenant-domain <argument>"))?
         .to_string();
@@ -61,20 +59,20 @@ pub fn config_from_args_ms(name: &str) -> Result<ConfigMS> {
 }
 
 /*
-Auth OAuth { 
-	access_token: None, 
-	scopes: {"User.ReadAll", "https://graph.microsoft.com/.default"}, 
-	credentials: 
-	{
-		"access_token_url": "https://login.microsoftonline.com/{tenant-domain}/oauth2/token", 
-		"authorization_url":"https://login.microsoftonline.com/{tenant-domain}/oauth2/authorize", 
-		"client_id": 		"337b2164-0006-41fc-a243-710f3d63c889", 
-		"client_secret": 	"6_uEpej8_vG.-Ph33Pg_Iv82u6QnP~30-E", 
-		"logout_url": 		"https://login.microsoftonline.com/{tenant-domain}/oauth2/logout", 
-		"redirect_uri": 	"https://login.microsoftonline.com/common/oauth2/nativeclient", 
-		"refresh_token_url":"https://login.microsoftonline.com/{tenant-domain}/oauth2/token"
-		}
-	}
+Auth OAuth {
+    access_token: None,
+    scopes: {"User.ReadAll", "https://graph.microsoft.com/.default"},
+    credentials:
+    {
+        "access_token_url": "https://login.microsoftonline.com/{tenant-domain}/oauth2/token",
+        "authorization_url":"https://login.microsoftonline.com/{tenant-domain}/oauth2/authorize",
+        "client_id": 		"My-ID",
+        "client_secret": 	"pa$$word",
+        "logout_url": 		"https://login.microsoftonline.com/{tenant-domain}/oauth2/logout",
+        "redirect_uri": 	"https://login.microsoftonline.com/common/oauth2/nativeclient",
+        "refresh_token_url":"https://login.microsoftonline.com/{tenant-domain}/oauth2/token"
+        }
+    }5np$1hLHtCcrI9QEgTH7xb6@d6u4r2Z8eGb%i3
 */
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -82,22 +80,35 @@ async fn main() -> anyhow::Result<()> {
 
     let reqwest_client = reqwest::Client::new();
 
-    let auth_url = Url::parse(format!("https://login.microsoftonline.com/{}/oauth2/authorize", config.tenant_domain).as_str())?;
-    let token_url = Url::parse(format!("https://login.microsoftonline.com/{}/oauth2/token", config.tenant_domain).as_str())?;
+    let auth_url = Url::parse(
+        format!(
+            "https://login.microsoftonline.com/{}/oauth2/authorize",
+            config.tenant_domain
+        )
+        .as_str(),
+    )?;
+    let token_url = Url::parse(
+        format!(
+            "https://login.microsoftonline.com/{}/oauth2/token",
+            config.tenant_domain
+        )
+        .as_str(),
+    )?;
     let redirect_url = Url::parse("https://login.microsoftonline.com/common/oauth2/nativeclient")?;
     //let refresh_token_url = Url::parse(format!("https://login.microsoftonline.com/{}/oauth2/token", config.tenant_domain).as_str())?;
 
     let mut client = Client::new(&config.client_id, auth_url, token_url);
     client.set_client_secret(&config.client_secret);
     client.set_redirect_url(redirect_url);
-    
+
     client.add_scope("User.ReadAll");
 
-    let token_result = client.exchange_client_credentials()
+    let token_result = client
+        .exchange_client_credentials()
         .with_client(&reqwest_client)
         .execute::<StandardToken>()
         .await?;
-    
+
     println!("Token: {:?}", token_result);
     Ok(())
 }
