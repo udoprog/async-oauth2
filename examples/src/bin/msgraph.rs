@@ -10,6 +10,7 @@ use anyhow::{anyhow, Result};
 pub struct ConfigMS {
     pub client_id: String,
     pub client_secret: String,
+    /// Tennant ID, Required in the url by M$ 
     pub tenant_domain: String,
 }
 
@@ -58,23 +59,6 @@ pub fn config_from_args_ms(name: &str) -> Result<ConfigMS> {
     })
 }
 
-/*
-- M$ Graph OAuth Parameters
-Auth OAuth {
-    access_token: None,
-    scopes: {"User.ReadAll", "https://graph.microsoft.com/.default"},
-    credentials:
-    {
-        "access_token_url": "https://login.microsoftonline.com/{tenant-domain}/oauth2/token",
-        "authorization_url":"https://login.microsoftonline.com/{tenant-domain}/oauth2/authorize",
-        "client_id": 		"My-ID",
-        "client_secret": 	"pa$$word",
-        "logout_url": 		"https://login.microsoftonline.com/{tenant-domain}/oauth2/logout",
-        "redirect_uri": 	"https://login.microsoftonline.com/common/oauth2/nativeclient",
-        "refresh_token_url":"https://login.microsoftonline.com/{tenant-domain}/oauth2/token"
-        }
-    }
-*/
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config = config_from_args_ms("msgraph Example")?;
