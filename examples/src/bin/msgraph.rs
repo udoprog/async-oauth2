@@ -59,6 +59,7 @@ pub fn config_from_args_ms(name: &str) -> Result<ConfigMS> {
 }
 
 /*
+- M$ Graph OAuth Parameters
 Auth OAuth {
     access_token: None,
     scopes: {"User.ReadAll", "https://graph.microsoft.com/.default"},
@@ -72,7 +73,7 @@ Auth OAuth {
         "redirect_uri": 	"https://login.microsoftonline.com/common/oauth2/nativeclient",
         "refresh_token_url":"https://login.microsoftonline.com/{tenant-domain}/oauth2/token"
         }
-    }5np$1hLHtCcrI9QEgTH7xb6@d6u4r2Z8eGb%i3
+    }
 */
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
