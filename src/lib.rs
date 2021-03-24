@@ -220,6 +220,7 @@ use std::{borrow::Cow, error, fmt, time::Duration};
 
 use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
+use serde_aux::prelude::*;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 pub use url::Url;
@@ -908,7 +909,7 @@ where
 pub struct StandardToken {
     access_token: AccessToken,
     token_type: TokenType,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_option_number_from_string")]
     expires_in: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     refresh_token: Option<RefreshToken>,
