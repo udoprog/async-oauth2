@@ -478,7 +478,7 @@ impl Client {
     ///   (code) for an access token, typically with client authentication. This URL is used in
     ///   all standard OAuth2 flows except the
     ///   [Implicit Grant](https://tools.ietf.org/html/rfc6749#section-4.2). If this value is set
-    ///   to `None`, the `exchange_*` methods will return `Err(RequestTokenError::Other(_))`.
+    ///   to `None`, the `exchange_*` methods will return `Err(ExecuteError::Other(_))`.
     pub fn new(client_id: impl AsRef<str>, auth_url: Url, token_url: Url) -> Self {
         Client {
             client_id: client_id.as_ref().to_string(),
@@ -687,11 +687,10 @@ pub struct ClientRequest<'a> {
 
 impl<'a> ClientRequest<'a> {
     /// Execute the token request.
-    pub async fn execute<T>(self) -> Result<T, RequestTokenError>
+    pub async fn execute<T>(self) -> Result<T, ExecuteError>
     where
         T: for<'de> Deserialize<'de>,
     {
-        use self::RequestTokenError::*;
         use reqwest::{header, Method};
 
         let token_url = self.request.token_url;
@@ -753,21 +752,24 @@ impl<'a> ClientRequest<'a> {
         let res = request
             .send()
             .await
-            .map_err(|error| ReqwestError { error })?;
+            .map_err(|error| ExecuteError::RequestError { error })?;
 
         let status = res.status();
 
-        let body = res.bytes().await.map_err(|error| ReqwestError { error })?;
+        let body = res
+            .bytes()
+            .await
+            .map_err(|error| ExecuteError::RequestError { error })?;
 
         if body.is_empty() {
-            return Err(EmptyResponse { status });
+            return Err(ExecuteError::EmptyResponse { status });
         }
 
         if !status.is_success() {
-            let error = match serde_json::from_slice::<self::ErrorResponse>(body.as_ref()) {
+            let error = match serde_json::from_slice::<ErrorResponse>(body.as_ref()) {
                 Ok(error) => error,
                 Err(error) => {
-                    return Err(BadResponse {
+                    return Err(ExecuteError::BadResponse {
                         status,
                         error,
                         body,
@@ -775,10 +777,10 @@ impl<'a> ClientRequest<'a> {
                 }
             };
 
-            return Err(RequestTokenError::ErrorResponse { status, error });
+            return Err(ExecuteError::ErrorResponse { status, error });
         }
 
-        return serde_json::from_slice(body.as_ref()).map_err(|error| BadResponse {
+        return serde_json::from_slice(body.as_ref()).map_err(|error| ExecuteError::BadResponse {
             status,
             error,
             body,
@@ -1060,10 +1062,10 @@ impl From<reqwest::Error> for NewClientError {
 /// Error encountered while requesting access token.
 #[derive(Debug, Error)]
 #[non_exhaustive]
-pub enum RequestTokenError {
+pub enum ExecuteError {
     /// A client error that occured.
     #[error("reqwest error")]
-    ReqwestError {
+    RequestError {
         /// Original request error.
         #[source]
         error: reqwest::Error,
@@ -1098,11 +1100,11 @@ pub enum RequestTokenError {
     },
 }
 
-impl RequestTokenError {
+impl ExecuteError {
     /// Access the status code of the error if available.
     pub fn status(&self) -> Option<http::status::StatusCode> {
         match *self {
-            Self::ReqwestError { ref error, .. } => error.status(),
+            Self::RequestError { ref error, .. } => error.status(),
             Self::BadResponse { status, .. } => Some(status),
             Self::ErrorResponse { status, .. } => Some(status),
             Self::EmptyResponse { status, .. } => Some(status),

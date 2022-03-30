@@ -50,16 +50,16 @@ impl Service<Request<Body>> for Server {
 
 /// Get configuration from arguments.
 pub fn config_from_args(name: &str) -> Result<Config> {
-    let app = clap::App::new(name)
+    let app = clap::Command::new(name)
         .about("Testing out OAuth 2.0 flows")
         .arg(
-            clap::Arg::with_name("client-id")
+            clap::Arg::new("client-id")
                 .takes_value(true)
                 .long("client-id")
                 .help("Client ID to use."),
         )
         .arg(
-            clap::Arg::with_name("client-secret")
+            clap::Arg::new("client-secret")
                 .takes_value(true)
                 .long("client-secret")
                 .help("Client Secret to use."),
