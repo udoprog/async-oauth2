@@ -32,3 +32,6 @@ bytes = "1.0.1"
 
 [dev-dependencies]
 tokio = { version = "1.0.2", features = ["full"] }
+
+[workspace]
+members = ["examples"]

@@ -603,11 +603,11 @@ impl Client {
     /// Requests an access token for the *password* grant type.
     ///
     /// See https://tools.ietf.org/html/rfc6749#section-4.3.2
-    pub fn exchange_password<'a>(
-        &'a self,
+    pub fn exchange_password(
+        &self,
         username: impl AsRef<str>,
         password: impl AsRef<str>,
-    ) -> Request<'a> {
+    ) -> Request<'_> {
         let username = username.as_ref();
         let password = password.as_ref();
 
@@ -680,16 +680,16 @@ impl Client {
 }
 
 /// A request wrapped in a client, ready to be executed.
-pub struct ClientRequest<'a, 'client> {
+pub struct ClientRequest<'a> {
     request: Request<'a>,
-    client: &'client reqwest::Client,
+    client: &'a reqwest::Client,
 }
 
-impl<'a, 'b> ClientRequest<'a, 'b> {
+impl<'a> ClientRequest<'a> {
     /// Execute the token request.
     pub async fn execute<T>(self) -> Result<T, RequestTokenError>
     where
-        T: Token,
+        T: for<'de> Deserialize<'de>,
     {
         use self::RequestTokenError::*;
         use reqwest::{header, Method};
@@ -812,10 +812,7 @@ impl<'a> Request<'a> {
     }
 
     /// Wrap the request in a client.
-    pub fn with_client<'client>(
-        self,
-        client: &'client reqwest::Client,
-    ) -> ClientRequest<'a, 'client> {
+    pub fn with_client<'client>(self, client: &'a reqwest::Client) -> ClientRequest<'a> {
         ClientRequest {
             client,
             request: self,
@@ -909,7 +906,10 @@ where
 pub struct StandardToken {
     access_token: AccessToken,
     token_type: TokenType,
-    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "deserialize_option_number_from_string")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_option_number_from_string"
+    )]
     expires_in: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     refresh_token: Option<RefreshToken>,

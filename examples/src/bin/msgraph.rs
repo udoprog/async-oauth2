@@ -10,7 +10,7 @@ use anyhow::{anyhow, Result};
 pub struct ConfigMS {
     pub client_id: String,
     pub client_secret: String,
-    /// Tennant ID, Required in the url by M$ 
+    /// Tennant ID, Required in the url by Microsoft.
     pub tenant_domain: String,
 }
 
