@@ -10,7 +10,7 @@ version = "0.3.0"
 license = "MIT/Apache-2.0"
 description = "An asynchronous OAuth2 flow implementation"
 repository = "https://github.com/udoprog/async-oauth2"
-edition = "2018"
+edition = "2021"
 readme = "README.md"
 
 [lib]
