@@ -14,7 +14,7 @@ readme = "README.md"
 homepage = "https://github.com/udoprog/async-oauth2"
 repository = "https://github.com/udoprog/async-oauth2"
 license = "MIT/Apache-2.0"
-keywords = ["oauth2", "auth"]
+keywords = ["auth", "oauth2"]
 categories = ["authentication", "web-programming"]
 
 [lib]
