@@ -231,6 +231,7 @@
 
 use std::{borrow::Cow, error, fmt, time::Duration};
 
+use base64::prelude::{Engine as _, BASE64_URL_SAFE_NO_PAD};
 use rand::{thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use serde_aux::prelude::*;
@@ -267,18 +268,21 @@ macro_rules! borrowed_newtype {
         impl std::ops::Deref for $name {
             type Target = $borrowed;
 
+            #[inline]
             fn deref(&self) -> &Self::Target {
                 &self.0
             }
         }
 
-        impl<'a> Into<Cow<'a, $borrowed>> for &'a $name {
-            fn into(self) -> Cow<'a, $borrowed> {
-                Cow::Borrowed(&self.0)
+        impl<'a> From<&'a $name> for Cow<'a, $borrowed> {
+            #[inline]
+            fn from(value: &'a $name) -> Cow<'a, $borrowed> {
+                Cow::Borrowed(&value.0)
             }
         }
 
         impl AsRef<$borrowed> for $name {
+            #[inline]
             fn as_ref(&self) -> &$borrowed {
                 self
             }
@@ -292,26 +296,30 @@ macro_rules! newtype {
         borrowed_newtype!($name, $borrowed);
 
         impl<'a> From<&'a $borrowed> for $name {
+            #[inline]
             fn from(value: &'a $borrowed) -> Self {
                 Self(value.to_owned())
             }
         }
 
         impl From<$owned> for $name {
+            #[inline]
             fn from(value: $owned) -> Self {
                 Self(value)
             }
         }
 
         impl<'a> From<&'a $owned> for $name {
+            #[inline]
             fn from(value: &'a $owned) -> Self {
                 Self(value.to_owned())
             }
         }
 
-        impl<'a> Into<$owned> for $name {
-            fn into(self) -> $owned {
-                self.0
+        impl From<$name> for $owned {
+            #[inline]
+            fn from(value: $name) -> $owned {
+                value.0
             }
         }
     };
@@ -359,7 +367,7 @@ impl State {
 
     /// Convert into base64.
     pub fn to_base64(&self) -> String {
-        base64::encode_config(&self.0, base64::URL_SAFE_NO_PAD)
+        BASE64_URL_SAFE_NO_PAD.encode(&self.0)
     }
 }
 
@@ -378,8 +386,9 @@ impl<'de> serde::Deserialize<'de> for State {
         D: serde::Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        let bytes =
-            base64::decode_config(&s, base64::URL_SAFE_NO_PAD).map_err(serde::de::Error::custom)?;
+        let bytes = BASE64_URL_SAFE_NO_PAD
+            .decode(&s)
+            .map_err(serde::de::Error::custom)?;
         let mut buf = [0u8; 16];
         buf.copy_from_slice(&bytes);
         Ok(Self(buf))
@@ -411,9 +420,9 @@ impl PkceCodeVerifierS256 {
         // The RFC specifies that the code verifier must have "a minimum length of 43
         // characters and a maximum length of 128 characters".
         // This implies 32-96 octets of random data to be base64 encoded.
-        assert!(num_bytes >= 32 && num_bytes <= 96);
+        assert!((32..=96).contains(&num_bytes));
         let random_bytes: Vec<u8> = (0..num_bytes).map(|_| thread_rng().gen::<u8>()).collect();
-        let code = base64::encode_config(&random_bytes, base64::URL_SAFE_NO_PAD);
+        let code = BASE64_URL_SAFE_NO_PAD.encode(&random_bytes);
         assert!(code.len() >= 43 && code.len() <= 128);
         PkceCodeVerifierS256(code)
     }
@@ -421,7 +430,7 @@ impl PkceCodeVerifierS256 {
     /// Return the code challenge for the code verifier.
     pub fn code_challenge(&self) -> PkceCodeChallengeS256 {
         let digest = Sha256::digest(self.as_bytes());
-        PkceCodeChallengeS256::from(base64::encode_config(&digest, base64::URL_SAFE_NO_PAD))
+        PkceCodeChallengeS256::from(BASE64_URL_SAFE_NO_PAD.encode(&digest))
     }
 
     /// Return the code challenge method for this code verifier.
@@ -737,10 +746,10 @@ impl<'a> ClientRequest<'a> {
                     // not standard for ordinary Basic auth, so curl won't do it for us.
                     let username = url_encode(self.request.client_id);
 
-                    let password = match self.request.client_secret {
-                        Some(client_secret) => Some(url_encode(client_secret)),
-                        None => None,
-                    };
+                    let password = self
+                        .request
+                        .client_secret
+                        .map(|client_secret| url_encode(client_secret));
 
                     request = request.basic_auth(&username, password.as_ref());
                 }
@@ -750,7 +759,7 @@ impl<'a> ClientRequest<'a> {
                 form.append_pair(key.as_ref(), value.as_ref());
             }
 
-            if let Some(ref redirect_url) = self.request.redirect_url {
+            if let Some(redirect_url) = &self.request.redirect_url {
                 form.append_pair("redirect_uri", redirect_url.as_str());
             }
 
@@ -827,7 +836,7 @@ impl<'a> Request<'a> {
     }
 
     /// Wrap the request in a client.
-    pub fn with_client<'client>(self, client: &'a reqwest::Client) -> ClientRequest<'a> {
+    pub fn with_client(self, client: &'a reqwest::Client) -> ClientRequest<'a> {
         ClientRequest {
             client,
             request: self,
