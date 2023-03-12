@@ -367,7 +367,7 @@ impl State {
 
     /// Convert into base64.
     pub fn to_base64(&self) -> String {
-        BASE64_URL_SAFE_NO_PAD.encode(&self.0)
+        BASE64_URL_SAFE_NO_PAD.encode(self.0)
     }
 }
 
@@ -387,7 +387,7 @@ impl<'de> serde::Deserialize<'de> for State {
     {
         let s = String::deserialize(deserializer)?;
         let bytes = BASE64_URL_SAFE_NO_PAD
-            .decode(&s)
+            .decode(s)
             .map_err(serde::de::Error::custom)?;
         let mut buf = [0u8; 16];
         buf.copy_from_slice(&bytes);
@@ -422,7 +422,7 @@ impl PkceCodeVerifierS256 {
         // This implies 32-96 octets of random data to be base64 encoded.
         assert!((32..=96).contains(&num_bytes));
         let random_bytes: Vec<u8> = (0..num_bytes).map(|_| thread_rng().gen::<u8>()).collect();
-        let code = BASE64_URL_SAFE_NO_PAD.encode(&random_bytes);
+        let code = BASE64_URL_SAFE_NO_PAD.encode(random_bytes);
         assert!(code.len() >= 43 && code.len() <= 128);
         PkceCodeVerifierS256(code)
     }
@@ -430,7 +430,7 @@ impl PkceCodeVerifierS256 {
     /// Return the code challenge for the code verifier.
     pub fn code_challenge(&self) -> PkceCodeChallengeS256 {
         let digest = Sha256::digest(self.as_bytes());
-        PkceCodeChallengeS256::from(BASE64_URL_SAFE_NO_PAD.encode(&digest))
+        PkceCodeChallengeS256::from(BASE64_URL_SAFE_NO_PAD.encode(digest))
     }
 
     /// Return the code challenge method for this code verifier.
