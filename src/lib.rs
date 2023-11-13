@@ -682,9 +682,24 @@ impl Client {
     ///
     /// See https://tools.ietf.org/html/rfc6749#section-6
     pub fn exchange_refresh_token(&self, refresh_token: &RefreshToken) -> Request<'_> {
-        self.request_token()
+        let mut builder = self.request_token()
             .param("grant_type", "refresh_token")
-            .param("refresh_token", refresh_token.to_string())
+            .param("refresh_token", refresh_token.to_string());
+
+        // Generate the space-delimited scopes String before initializing params so that it has
+        // a long enough lifetime.
+        if !self.scopes.is_empty() {
+            let scopes = self
+                .scopes
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            builder = builder.param("scope", scopes);
+        }
+
+        builder
     }
 
     /// Construct a request builder for the token URL.
