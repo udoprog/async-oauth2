@@ -682,7 +682,8 @@ impl Client {
     ///
     /// See https://tools.ietf.org/html/rfc6749#section-6
     pub fn exchange_refresh_token(&self, refresh_token: &RefreshToken) -> Request<'_> {
-        let mut builder = self.request_token()
+        let mut builder = self
+            .request_token()
             .param("grant_type", "refresh_token")
             .param("refresh_token", refresh_token.to_string());
 
