@@ -1,6 +1,6 @@
 [package]
 name = "async-oauth2"
-version = "0.4.3"
+version = "0.5.0"
 authors = [
   "Alex Crichton <alex@alexcrichton.com>",
   "Florin Lipan <florinlipan@gmail.com>",
@@ -8,7 +8,7 @@ authors = [
   "John-John Tedro <udoprog@tedro.se>"
 ]
 edition = "2021"
-rust-version = "1.63"
+rust-version = "1.74"
 description = "An asynchronous OAuth2 flow implementation."
 documentation = "https://docs.rs/async-oauth2"
 readme = "README.md"
@@ -23,17 +23,17 @@ name = "oauth2"
 path = "src/lib.rs"
 
 [dependencies]
-base64 = "0.21.0"
+base64 = "0.22.0"
 rand = "0.8.5"
-serde = { version = "1.0.155", features = ["derive"] }
-serde_json = "1.0.94"
-serde-aux = "4.1.2"
+serde = { version = "1.0.197", features = ["derive"] }
+serde_json = "1.0.115"
+serde-aux = "4.5.0"
 sha2 = "0.10.6"
-url = "2.3.1"
-reqwest = "0.11.14"
+url = "2.5.0"
+reqwest = "0.12.0"
 thiserror = "1.0.39"
-http = "0.2.9"
-bytes = "1.4.0"
+http = "1.1.0"
+bytes = "1.6.0"
 
 [dev-dependencies]
 tokio = { version = "1.26.0", features = ["full"] }

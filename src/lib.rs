@@ -714,9 +714,9 @@ impl<'a> ClientRequest<'a> {
     {
         use reqwest::{header, Method};
 
-        let token_url = self.request.token_url;
-
-        let mut request = self.client.request(Method::POST, &token_url.to_string());
+        let mut request = self
+            .client
+            .request(Method::POST, self.request.token_url.clone());
 
         // Section 5.1 of RFC 6749 (https://tools.ietf.org/html/rfc6749#section-5.1) only permits
         // JSON responses for this request. Some providers such as GitHub have off-spec behavior
@@ -750,7 +750,7 @@ impl<'a> ClientRequest<'a> {
                         .client_secret
                         .map(|client_secret| url_encode(client_secret));
 
-                    request = request.basic_auth(&username, password.as_ref());
+                    request = request.basic_auth(username, password.as_ref());
                 }
             }
 

@@ -1,14 +1,17 @@
+use std::future::ready;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
 use anyhow::{anyhow, Result};
-use futures::{
-    channel::oneshot,
-    prelude::*,
-    task::{Context, Poll},
-};
 use hyper::{body::Body, server, service, Request, Response};
 use oauth2::{AuthorizationCode, State};
 use serde::Deserialize;
 use std::net::SocketAddr;
+use tokio::sync::oneshot;
 use tower_service::Service;
+
+type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + Sync + 'a>>;
 
 pub struct Config {
     pub client_id: String,
@@ -29,7 +32,7 @@ pub struct Server {
 impl Service<Request<Body>> for Server {
     type Response = Response<Body>;
     type Error = anyhow::Error;
-    type Future = future::BoxFuture<'static, Result<Self::Response, Self::Error>>;
+    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
     fn poll_ready(&mut self, _: &mut Context) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
@@ -44,23 +47,21 @@ impl Service<Request<Body>> for Server {
             }
         }
 
-        Box::pin(future::ok(Response::new(Body::empty())))
+        Box::pin(ready(Ok(Response::new(Body::empty()))))
     }
 }
 
 /// Get configuration from arguments.
-pub fn config_from_args(name: &str) -> Result<Config> {
+pub fn config_from_args(name: &'static str) -> Result<Config> {
     let app = clap::Command::new(name)
         .about("Testing out OAuth 2.0 flows")
         .arg(
             clap::Arg::new("client-id")
-                .takes_value(true)
                 .long("client-id")
                 .help("Client ID to use."),
         )
         .arg(
             clap::Arg::new("client-secret")
-                .takes_value(true)
                 .long("client-secret")
                 .help("Client Secret to use."),
         );
@@ -68,13 +69,14 @@ pub fn config_from_args(name: &str) -> Result<Config> {
     let m = app.get_matches();
 
     let client_id = m
-        .value_of("client-id")
+        .get_one::<String>("client-id")
         .ok_or_else(|| anyhow!("missing: --client-id <argument>"))?
-        .to_string();
+        .to_owned();
+
     let client_secret = m
-        .value_of("client-secret")
+        .get_one::<String>("client-secret")
         .ok_or_else(|| anyhow!("missing: --client-secret <argument>"))?
-        .to_string();
+        .to_owned();
 
     Ok(Config {
         client_id,
@@ -103,10 +105,7 @@ pub async fn listen_for_code(port: u32) -> Result<ReceivedCode> {
         async move { Ok::<_, hyper::Error>(service) }
     }));
 
-    let mut server_future = server_future.fuse();
-    let mut rx = rx.fuse();
-
-    futures::select! {
+    tokio::select! {
         _ = server_future => panic!("server exited for some reason"),
         received = rx => Ok(received?),
     }

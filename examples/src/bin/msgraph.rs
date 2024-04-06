@@ -14,24 +14,21 @@ pub struct ConfigMS {
     pub tenant_domain: String,
 }
 
-pub fn config_from_args_ms(name: &str) -> Result<ConfigMS> {
+pub fn config_from_args_ms(name: &'static str) -> Result<ConfigMS> {
     let app = clap::Command::new(name)
         .about("Testing out OAuth 2.0 flows")
         .arg(
             clap::Arg::new("client-id")
-                .takes_value(true)
                 .long("client-id")
                 .help("Client ID to use."),
         )
         .arg(
             clap::Arg::new("client-secret")
-                .takes_value(true)
                 .long("client-secret")
                 .help("Client Secret to use."),
         )
         .arg(
             clap::Arg::new("tenant-domain")
-                .takes_value(true)
                 .long("tenant-domain")
                 .help("Tenant domain to use."),
         );
@@ -39,18 +36,19 @@ pub fn config_from_args_ms(name: &str) -> Result<ConfigMS> {
     let m = app.get_matches();
 
     let client_id = m
-        .value_of("client-id")
+        .get_one::<String>("client-id")
         .ok_or_else(|| anyhow!("missing: --client-id <argument>"))?
-        .to_string();
+        .to_owned();
+
     let client_secret = m
-        .value_of("client-secret")
+        .get_one::<String>("client-secret")
         .ok_or_else(|| anyhow!("missing: --client-secret <argument>"))?
-        .to_string();
+        .to_owned();
 
     let tenant_domain = m
-        .value_of("tenant-domain")
+        .get_one::<String>("tenant-domain")
         .ok_or_else(|| anyhow!("missing: --tenant-domain <argument>"))?
-        .to_string();
+        .to_owned();
 
     Ok(ConfigMS {
         client_id,
