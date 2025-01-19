@@ -706,7 +706,7 @@ pub struct ClientRequest<'a> {
     client: &'a reqwest::Client,
 }
 
-impl<'a> ClientRequest<'a> {
+impl ClientRequest<'_> {
     /// Execute the token request.
     pub async fn execute<T>(self) -> Result<T, ExecuteError>
     where
