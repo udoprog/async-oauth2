@@ -1059,7 +1059,7 @@ impl fmt::Display for ErrorResponse {
             formatted.push_str(error_uri);
         }
 
-        write!(f, "{}", formatted)
+        write!(f, "{formatted}")
     }
 }
 

@@ -60,7 +60,7 @@ async fn main() -> anyhow::Result<()> {
     let state = State::new_random();
     let auth_url = client.authorize_url(&state);
 
-    println!("Browse to: {}", auth_url);
+    println!("Browse to: {auth_url}");
 
     let received = listen_for_code(8080).await?;
 
@@ -76,6 +76,6 @@ async fn main() -> anyhow::Result<()> {
         .execute::<TwitchToken>()
         .await?;
 
-    println!("Token: {:?}", token);
+    println!("Token: {token:?}");
     Ok(())
 }

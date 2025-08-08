@@ -86,8 +86,8 @@ pub fn config_from_args(name: &'static str) -> Result<Config> {
 
 /// Listen for a code at the specified port.
 pub async fn listen_for_code(port: u32) -> Result<ReceivedCode> {
-    let bind = format!("127.0.0.1:{}", port);
-    log::info!("Listening on: http://{}", bind);
+    let bind = format!("127.0.0.1:{port}");
+    log::info!("Listening on: http://{bind}");
 
     let addr: SocketAddr = str::parse(&bind)?;
 

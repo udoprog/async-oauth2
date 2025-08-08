@@ -92,6 +92,6 @@ async fn main() -> anyhow::Result<()> {
         .execute::<StandardToken>()
         .await?;
 
-    println!("Token: {:?}", token_result);
+    println!("Token: {token_result:?}");
     Ok(())
 }
