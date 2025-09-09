@@ -672,7 +672,7 @@ impl Client {
                 .collect::<Vec<_>>()
                 .join(" ");
 
-            builder = builder.param("scopes", scopes);
+            builder = builder.param("scope", scopes);
         }
 
         builder
