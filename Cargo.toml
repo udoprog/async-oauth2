@@ -19,7 +19,7 @@ keywords = ["auth", "oauth2"]
 categories = ["authentication", "web-programming"]
 
 [features]
-default = ["reqwest", "alloc"]
+default = ["reqwest", "rand", "alloc"]
 reqwest = ["dep:reqwest"]
 rand = ["dep:rand"]
 alloc = []
