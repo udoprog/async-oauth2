@@ -227,15 +227,30 @@
 //! [Twitch]: https://github.com/udoprog/async-oauth2/blob/master/examples/src/bin/twitch.rs
 
 #![deny(missing_docs)]
+#![no_std]
 
-use std::{borrow::Cow, error, fmt, time::Duration};
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
+#[cfg(not(feature = "alloc"))]
+compile_error!("The `alloc` feature is required for async-oauth2 to work. Please enable it in your Cargo.toml.");
+
+use core::error::Error;
+use core::fmt;
+use core::ops::Deref;
+use core::time::Duration;
+
+use alloc::borrow::{Cow, ToOwned};
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use base64::prelude::{Engine as _, BASE64_URL_SAFE_NO_PAD};
-use rand::{thread_rng, Rng};
+use bytes::Bytes;
+use http::status::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_aux::prelude::*;
 use sha2::{Digest, Sha256};
-use thiserror::Error;
+
 pub use url::Url;
 
 /// Indicates whether requests to the authorization server should use basic authentication or
@@ -264,7 +279,7 @@ macro_rules! redacted_debug {
 /// borrowed newtype plumbing
 macro_rules! borrowed_newtype {
     ($name:ident, $borrowed:ty) => {
-        impl std::ops::Deref for $name {
+        impl Deref for $name {
             type Target = $borrowed;
 
             #[inline]
@@ -358,10 +373,25 @@ borrowed_newtype!(State, [u8]);
 
 impl State {
     /// Generate a new random, base64-encoded 128-bit CSRF token.
+    #[cfg(feature = "rand")]
+    #[inline]
     pub fn new_random() -> Self {
         let mut random_bytes = [0u8; 16];
-        thread_rng().fill(&mut random_bytes);
+        rand::fill(&mut random_bytes);
         State(random_bytes)
+    }
+
+    /// Construct state from random bytes.
+    ///
+    /// This is potentially unsafe unless you can guarantee that the provided
+    /// bytes are generated from a cryptographically secure random number
+    /// generator.
+    ///
+    /// If you are not sure of this, enable the `rand` feature and use
+    /// [`State::new_random()`] instead.
+    #[inline]
+    pub fn from_random(bytes: [u8; 16]) -> Self {
+        State(bytes)
     }
 
     /// Convert into base64.
@@ -404,6 +434,7 @@ newtype!(PkceCodeVerifierS256, String, str);
 
 impl PkceCodeVerifierS256 {
     /// Generate a new random, base64-encoded code verifier.
+    #[cfg(feature = "rand")]
     pub fn new_random() -> Self {
         PkceCodeVerifierS256::new_random_len(32)
     }
@@ -415,12 +446,13 @@ impl PkceCodeVerifierS256 {
     /// * `num_bytes` - Number of random bytes to generate, prior to base64-encoding.
     ///   The value must be in the range 32 to 96 inclusive in order to generate a verifier
     ///   with a suitable length.
+    #[cfg(feature = "rand")]
     pub fn new_random_len(num_bytes: u32) -> Self {
         // The RFC specifies that the code verifier must have "a minimum length of 43
         // characters and a maximum length of 128 characters".
         // This implies 32-96 octets of random data to be base64 encoded.
         assert!((32..=96).contains(&num_bytes));
-        let random_bytes: Vec<u8> = (0..num_bytes).map(|_| thread_rng().gen::<u8>()).collect();
+        let random_bytes: Vec<u8> = (0..num_bytes).map(|_| rand::random::<u8>()).collect();
         let code = BASE64_URL_SAFE_NO_PAD.encode(random_bytes);
         assert!(code.len() >= 43 && code.len() <= 128);
         PkceCodeVerifierS256(code)
@@ -439,13 +471,13 @@ impl PkceCodeVerifierS256 {
 
     /// Return the extension params used for authorize_url.
     pub fn authorize_url_params(&self) -> Vec<(&'static str, String)> {
-        vec![
-            (
-                "code_challenge_method",
-                PkceCodeVerifierS256::code_challenge_method().into(),
-            ),
-            ("code_challenge", self.code_challenge().into()),
-        ]
+        let mut vec = Vec::with_capacity(2);
+        vec.push((
+            "code_challenge_method",
+            PkceCodeVerifierS256::code_challenge_method().into(),
+        ));
+        vec.push(("code_challenge", self.code_challenge().into()));
+        vec
     }
 }
 
@@ -695,24 +727,32 @@ impl Client {
             client_id: &self.client_id,
             client_secret: self.client_secret.as_ref(),
             redirect_url: self.redirect_url.as_ref(),
-            params: vec![],
+            params: Vec::new(),
         }
     }
 }
 
 /// A request wrapped in a client, ready to be executed.
-pub struct ClientRequest<'a> {
+#[cfg(feature = "reqwest")]
+pub struct ReqwestClientRequest<'a> {
     request: Request<'a>,
     client: &'a reqwest::Client,
 }
 
-impl ClientRequest<'_> {
+#[cfg(feature = "reqwest")]
+impl ReqwestClientRequest<'_> {
     /// Execute the token request.
     pub async fn execute<T>(self) -> Result<T, ExecuteError>
     where
         T: for<'de> Deserialize<'de>,
     {
         use reqwest::{header, Method};
+
+        const CONTENT_TYPE_JSON: &str = "application/json";
+
+        fn url_encode(s: &str) -> String {
+            url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>()
+        }
 
         let mut request = self
             .client
@@ -773,49 +813,53 @@ impl ClientRequest<'_> {
         let res = request
             .send()
             .await
-            .map_err(|error| ExecuteError::RequestError { error })?;
+            .map_err(|error| ExecuteErrorKind::SendError { error })?;
 
         let status = res.status();
 
         let body = res
             .bytes()
             .await
-            .map_err(|error| ExecuteError::RequestError { error })?;
+            .map_err(|error| ExecuteErrorKind::BytesError { error })?;
 
         if body.is_empty() {
-            return Err(ExecuteError::EmptyResponse { status });
+            return Err(ExecuteError::from(ExecuteErrorKind::EmptyResponse {
+                status,
+            }));
         }
 
         if !status.is_success() {
             let error = match serde_json::from_slice::<ErrorResponse>(body.as_ref()) {
                 Ok(error) => error,
                 Err(error) => {
-                    return Err(ExecuteError::BadResponse {
+                    return Err(ExecuteError::from(ExecuteErrorKind::BadResponse {
                         status,
                         error,
                         body,
-                    });
+                    }));
                 }
             };
 
-            return Err(ExecuteError::ErrorResponse { status, error });
+            return Err(ExecuteError::from(ExecuteErrorKind::ErrorResponse {
+                status,
+                error,
+            }));
         }
 
-        return serde_json::from_slice(body.as_ref()).map_err(|error| ExecuteError::BadResponse {
-            status,
-            error,
-            body,
-        });
+        let value = serde_json::from_slice(body.as_ref()).map_err(|error| {
+            ExecuteErrorKind::BadResponse {
+                status,
+                error,
+                body,
+            }
+        })?;
 
-        fn url_encode(s: &str) -> String {
-            url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>()
-        }
-
-        const CONTENT_TYPE_JSON: &str = "application/json";
+        Ok(value)
     }
 }
 
 /// A token request that is in progress.
+#[cfg_attr(not(any(feature = "reqwest")), allow(unused))]
 pub struct Request<'a> {
     token_url: &'a Url,
     auth_type: AuthType,
@@ -835,10 +879,11 @@ impl<'a> Request<'a> {
     }
 
     /// Wrap the request in a client.
-    pub fn with_client(self, client: &'a reqwest::Client) -> ClientRequest<'a> {
-        ClientRequest {
-            client,
+    #[cfg(feature = "reqwest")]
+    pub fn with_reqwest_client(self, client: &'a reqwest::Client) -> ReqwestClientRequest<'a> {
+        ReqwestClientRequest {
             request: self,
+            client,
         }
     }
 }
@@ -873,7 +918,7 @@ impl<'de> serde::de::Deserialize<'de> for TokenType {
         #[derive(Debug)]
         struct UnknownVariantError(String);
 
-        impl error::Error for UnknownVariantError {}
+        impl Error for UnknownVariantError {}
 
         impl fmt::Display for UnknownVariantError {
             fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
@@ -1063,79 +1108,183 @@ impl fmt::Display for ErrorResponse {
     }
 }
 
-impl error::Error for ErrorResponse {}
+impl Error for ErrorResponse {}
 
 /// Errors when creating new clients.
-#[derive(Debug, Error)]
-#[non_exhaustive]
-pub enum NewClientError {
-    /// Error creating underlying reqwest client.
-    #[error("Failed to construct client")]
-    Reqwest(#[source] reqwest::Error),
+pub struct NewClientError {
+    kind: NewClientErrorKind,
 }
 
+impl Error for NewClientError {
+    #[inline]
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self.kind {
+            #[cfg(feature = "reqwest")]
+            NewClientErrorKind::Reqwest { ref error } => Some(error),
+        }
+    }
+}
+
+impl fmt::Display for NewClientError {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind.fmt(f)
+    }
+}
+
+impl fmt::Debug for NewClientError {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind.fmt(f)
+    }
+}
+
+#[derive(Debug)]
+enum NewClientErrorKind {
+    /// Error creating underlying reqwest client.
+    #[cfg(feature = "reqwest")]
+    Reqwest { error: reqwest::Error },
+}
+
+impl fmt::Display for NewClientErrorKind {
+    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            #[cfg(feature = "reqwest")]
+            NewClientErrorKind::Reqwest { .. } => "error constructing reqwest client".fmt(_f),
+        }
+    }
+}
+
+#[cfg(feature = "reqwest")]
 impl From<reqwest::Error> for NewClientError {
+    #[inline]
     fn from(error: reqwest::Error) -> Self {
-        Self::Reqwest(error)
+        Self {
+            kind: NewClientErrorKind::Reqwest { error },
+        }
     }
 }
 
 /// Error encountered while requesting access token.
-#[derive(Debug, Error)]
-#[non_exhaustive]
-pub enum ExecuteError {
-    /// A client error that occured.
-    #[error("reqwest error")]
-    RequestError {
+pub struct ExecuteError {
+    kind: ExecuteErrorKind,
+}
+
+impl From<ExecuteErrorKind> for ExecuteError {
+    #[inline]
+    fn from(kind: ExecuteErrorKind) -> Self {
+        Self { kind }
+    }
+}
+
+impl Error for ExecuteError {
+    #[inline]
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self.kind {
+            #[cfg(feature = "reqwest")]
+            ExecuteErrorKind::SendError { ref error } => Some(error),
+            #[cfg(feature = "reqwest")]
+            ExecuteErrorKind::BytesError { ref error } => Some(error),
+            ExecuteErrorKind::BadResponse { ref error, .. } => Some(error),
+            ExecuteErrorKind::ErrorResponse { ref error, .. } => Some(error),
+            ExecuteErrorKind::EmptyResponse { .. } => None,
+        }
+    }
+}
+
+impl fmt::Display for ExecuteError {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind.fmt(f)
+    }
+}
+
+impl fmt::Debug for ExecuteError {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind.fmt(f)
+    }
+}
+
+#[derive(Debug)]
+enum ExecuteErrorKind {
+    #[cfg(feature = "reqwest")]
+    SendError {
         /// Original request error.
-        #[source]
+        error: reqwest::Error,
+    },
+    #[cfg(feature = "reqwest")]
+    BytesError {
+        /// Original request error.
         error: reqwest::Error,
     },
     /// Failed to parse server response. Parse errors may occur while parsing either successful
     /// or error responses.
-    #[error("malformed server response: {status}")]
+    #[cfg_attr(not(any(feature = "reqwest")), allow(unused))]
     BadResponse {
         /// The status code associated with the response.
-        status: http::status::StatusCode,
+        status: StatusCode,
         /// The body that couldn't be deserialized.
-        body: bytes::Bytes,
+        body: Bytes,
         /// Deserialization error.
-        #[source]
         error: serde_json::error::Error,
     },
     /// Response with non-successful status code and a body that could be
     /// successfully deserialized as an [ErrorResponse].
-    #[error("request resulted in error response: {status}")]
+    #[cfg_attr(not(any(feature = "reqwest")), allow(unused))]
     ErrorResponse {
         /// The status code associated with the response.
-        status: http::status::StatusCode,
+        status: StatusCode,
         /// The deserialized response.
-        #[source]
         error: ErrorResponse,
     },
     /// Server response was empty.
-    #[error("request resulted in empty response: {status}")]
+    #[cfg_attr(not(any(feature = "reqwest")), allow(unused))]
     EmptyResponse {
         /// The status code associated with the empty response.
-        status: http::status::StatusCode,
+        status: StatusCode,
     },
+}
+
+impl fmt::Display for ExecuteErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            #[cfg(feature = "reqwest")]
+            ExecuteErrorKind::SendError { .. } => "error sending request".fmt(f),
+            #[cfg(feature = "reqwest")]
+            ExecuteErrorKind::BytesError { .. } => "error reading response bytes".fmt(f),
+            ExecuteErrorKind::BadResponse { status, .. } => {
+                write!(f, "malformed server response: {status}")
+            }
+            ExecuteErrorKind::ErrorResponse { status, .. } => {
+                write!(f, "request resulted in error response: {status}")
+            }
+            ExecuteErrorKind::EmptyResponse { status } => {
+                write!(f, "request resulted in empty response: {status}")
+            }
+        }
+    }
 }
 
 impl ExecuteError {
     /// Access the status code of the error if available.
-    pub fn status(&self) -> Option<http::status::StatusCode> {
-        match *self {
-            Self::RequestError { ref error, .. } => error.status(),
-            Self::BadResponse { status, .. } => Some(status),
-            Self::ErrorResponse { status, .. } => Some(status),
-            Self::EmptyResponse { status, .. } => Some(status),
+    #[inline]
+    pub fn status(&self) -> Option<StatusCode> {
+        match self.kind {
+            #[cfg(feature = "reqwest")]
+            ExecuteErrorKind::SendError { ref error } => error.status(),
+            #[cfg(feature = "reqwest")]
+            ExecuteErrorKind::BytesError { ref error } => error.status(),
+            ExecuteErrorKind::BadResponse { status, .. } => Some(status),
+            ExecuteErrorKind::ErrorResponse { status, .. } => Some(status),
+            ExecuteErrorKind::EmptyResponse { status, .. } => Some(status),
         }
     }
 
     /// The original response body if available.
-    pub fn body(&self) -> Option<&bytes::Bytes> {
-        match *self {
-            Self::BadResponse { ref body, .. } => Some(body),
+    pub fn body(&self) -> Option<&Bytes> {
+        match self.kind {
+            ExecuteErrorKind::BadResponse { ref body, .. } => Some(body),
             _ => None,
         }
     }
@@ -1143,6 +1292,9 @@ impl ExecuteError {
 
 /// Helper methods used by OAuth2 implementations/extensions.
 pub mod helpers {
+    use alloc::string::{String, ToString};
+    use alloc::vec::Vec;
+
     use serde::{Deserialize, Deserializer, Serializer};
     use url::Url;
 

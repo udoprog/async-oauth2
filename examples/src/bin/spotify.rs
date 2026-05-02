@@ -29,7 +29,7 @@ async fn main() -> anyhow::Result<()> {
 
     let token = client
         .exchange_code(received.code)
-        .with_client(&reqwest_client)
+        .with_reqwest_client(&reqwest_client)
         .execute::<StandardToken>()
         .await?;
 

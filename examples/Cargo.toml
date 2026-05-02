@@ -8,13 +8,14 @@ publish = false
 name = "oauth2_examples"
 
 [dependencies]
-reqwest = "0.12.0"
+async-oauth2 = {path = ".."}
+
+reqwest = "0.13.3"
 tokio = { version = "1.17.0", features = ["full"] }
-hyper = { version = "0.14.18", features = ["server", "http1", "tcp"] }
+hyper = { version = "1.9.0", features = ["server", "http1"] }
 serde = { version = "1.0.197", features = ["derive"] }
 serde_urlencoded = "0.7.1"
 tower-service = "0.3.2"
 log = "0.4.21"
 anyhow = "1.0.81"
 clap = "4.5.4"
-async-oauth2 = {path = ".."}

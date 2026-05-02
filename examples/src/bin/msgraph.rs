@@ -88,7 +88,7 @@ async fn main() -> anyhow::Result<()> {
 
     let token_result = client
         .exchange_client_credentials()
-        .with_client(&reqwest_client)
+        .with_reqwest_client(&reqwest_client)
         .execute::<StandardToken>()
         .await?;
 

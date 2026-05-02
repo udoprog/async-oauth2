@@ -72,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
         .exchange_code(received.code)
         .param("client_id", &config.client_id)
         .param("client_secret", &config.client_secret)
-        .with_client(&reqwest_client)
+        .with_reqwest_client(&reqwest_client)
         .execute::<TwitchToken>()
         .await?;
 
