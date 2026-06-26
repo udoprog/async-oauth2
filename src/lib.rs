@@ -976,6 +976,7 @@ pub struct StandardToken {
     access_token: AccessToken,
     token_type: TokenType,
     #[serde(
+        default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "deserialize_option_number_from_string"
     )]
