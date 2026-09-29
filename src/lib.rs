@@ -247,9 +247,9 @@ use alloc::vec::Vec;
 
 use base64::prelude::{Engine as _, BASE64_URL_SAFE_NO_PAD};
 use bytes::Bytes;
+#[cfg(feature = "reqwest")]
 use http::status::StatusCode;
 use serde::{Deserialize, Serialize};
-use serde_aux::prelude::*;
 use sha2::{Digest, Sha256};
 
 pub use url::Url;
@@ -978,7 +978,7 @@ pub struct StandardToken {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "deserialize_option_number_from_string"
+        deserialize_with = "helpers::deserialize_option_number_from_string"
     )]
     expires_in: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1187,8 +1187,11 @@ impl Error for ExecuteError {
             ExecuteErrorKind::SendError { ref error } => Some(error),
             #[cfg(feature = "reqwest")]
             ExecuteErrorKind::BytesError { ref error } => Some(error),
+            #[cfg(feature = "reqwest")]
             ExecuteErrorKind::BadResponse { ref error, .. } => Some(error),
+            #[cfg(feature = "reqwest")]
             ExecuteErrorKind::ErrorResponse { ref error, .. } => Some(error),
+            #[cfg(feature = "reqwest")]
             ExecuteErrorKind::EmptyResponse { .. } => None,
         }
     }
@@ -1222,7 +1225,7 @@ enum ExecuteErrorKind {
     },
     /// Failed to parse server response. Parse errors may occur while parsing either successful
     /// or error responses.
-    #[cfg_attr(not(any(feature = "reqwest")), allow(unused))]
+    #[cfg(feature = "reqwest")]
     BadResponse {
         /// The status code associated with the response.
         status: StatusCode,
@@ -1233,7 +1236,7 @@ enum ExecuteErrorKind {
     },
     /// Response with non-successful status code and a body that could be
     /// successfully deserialized as an [ErrorResponse].
-    #[cfg_attr(not(any(feature = "reqwest")), allow(unused))]
+    #[cfg(feature = "reqwest")]
     ErrorResponse {
         /// The status code associated with the response.
         status: StatusCode,
@@ -1241,7 +1244,7 @@ enum ExecuteErrorKind {
         error: ErrorResponse,
     },
     /// Server response was empty.
-    #[cfg_attr(not(any(feature = "reqwest")), allow(unused))]
+    #[cfg(feature = "reqwest")]
     EmptyResponse {
         /// The status code associated with the empty response.
         status: StatusCode,
@@ -1249,18 +1252,22 @@ enum ExecuteErrorKind {
 }
 
 impl fmt::Display for ExecuteErrorKind {
+    #[cfg_attr(not(feature = "reqwest"), allow(unused_variables))]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             #[cfg(feature = "reqwest")]
             ExecuteErrorKind::SendError { .. } => "error sending request".fmt(f),
             #[cfg(feature = "reqwest")]
             ExecuteErrorKind::BytesError { .. } => "error reading response bytes".fmt(f),
+            #[cfg(feature = "reqwest")]
             ExecuteErrorKind::BadResponse { status, .. } => {
                 write!(f, "malformed server response: {status}")
             }
+            #[cfg(feature = "reqwest")]
             ExecuteErrorKind::ErrorResponse { status, .. } => {
                 write!(f, "request resulted in error response: {status}")
             }
+            #[cfg(feature = "reqwest")]
             ExecuteErrorKind::EmptyResponse { status } => {
                 write!(f, "request resulted in empty response: {status}")
             }
@@ -1270,6 +1277,7 @@ impl fmt::Display for ExecuteErrorKind {
 
 impl ExecuteError {
     /// Access the status code of the error if available.
+    #[cfg(feature = "reqwest")]
     #[inline]
     pub fn status(&self) -> Option<StatusCode> {
         match self.kind {
@@ -1286,7 +1294,9 @@ impl ExecuteError {
     /// The original response body if available.
     pub fn body(&self) -> Option<&Bytes> {
         match self.kind {
+            #[cfg(feature = "reqwest")]
             ExecuteErrorKind::BadResponse { ref body, .. } => Some(body),
+            #[allow(unreachable_patterns)]
             _ => None,
         }
     }
@@ -1390,5 +1400,75 @@ pub mod helpers {
         S: Serializer,
     {
         serializer.serialize_str(url.as_str())
+    }
+
+    /// Deserialize an optional number which might be encoded as a string.
+    ///
+    /// Empty strings and `null` deserialize to `None`.
+    pub(crate) fn deserialize_option_number_from_string<'de, T, D>(
+        deserializer: D,
+    ) -> Result<Option<T>, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: core::str::FromStr + Deserialize<'de>,
+        T::Err: core::fmt::Display,
+    {
+        use serde::de::Error;
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum NumberOrString<'a, T> {
+            Str(&'a str),
+            String(String),
+            Number(T),
+            Null,
+        }
+
+        fn parse<T, E>(s: &str) -> Result<Option<T>, E>
+        where
+            T: core::str::FromStr,
+            T::Err: core::fmt::Display,
+            E: Error,
+        {
+            if s.is_empty() {
+                return Ok(None);
+            }
+
+            s.parse().map(Some).map_err(E::custom)
+        }
+
+        match NumberOrString::<T>::deserialize(deserializer)? {
+            NumberOrString::Str(s) => parse(s),
+            NumberOrString::String(s) => parse(&s),
+            NumberOrString::Number(n) => Ok(Some(n)),
+            NumberOrString::Null => Ok(None),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StandardToken;
+
+    #[test]
+    fn expires_in_number_or_string() {
+        let expires_in = |json: &str| {
+            serde_json::from_str::<StandardToken>(json)
+                .map(|token| token.expires_in)
+                .ok()
+        };
+
+        let token = |expires_in: &str| {
+            alloc::format!(
+                r#"{{"access_token":"a","token_type":"bearer","expires_in":{expires_in}}}"#
+            )
+        };
+
+        assert_eq!(expires_in(&token("3600")), Some(Some(3600)));
+        assert_eq!(expires_in(&token(r#""3600""#)), Some(Some(3600)));
+        assert_eq!(expires_in(&token(r#""""#)), Some(None));
+        assert_eq!(expires_in(&token("null")), Some(None));
+        assert_eq!(expires_in(&token(r#""abc""#)), None);
+        assert_eq!(expires_in(&token("true")), None);
     }
 }

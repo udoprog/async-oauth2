@@ -85,7 +85,7 @@ if received.state != state {
 
 // Now you can trade it for an access token.
 let token = client.exchange_code(received.code)
-    .with_client(&reqwest_client)
+    .with_reqwest_client(&reqwest_client)
     .execute::<StandardToken>()
     .await?;
 
@@ -162,7 +162,7 @@ client.add_scope("read");
 
 let token = client
     .exchange_password("user", "pass")
-    .with_client(&reqwest_client)
+    .with_reqwest_client(&reqwest_client)
     .execute::<StandardToken>()
     .await?;
 
@@ -190,7 +190,7 @@ client.set_client_secret("client_secret");
 client.add_scope("read");
 
 let token_result = client.exchange_client_credentials()
-    .with_client(&reqwest_client)
+    .with_reqwest_client(&reqwest_client)
     .execute::<StandardToken>();
 
 ```
